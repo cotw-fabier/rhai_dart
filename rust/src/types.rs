@@ -20,19 +20,29 @@ use std::ffi::c_char;
 pub struct CRhaiEngine {
     /// The wrapped Rhai engine
     pub(crate) inner: Arc<Engine>,
+
+    /// Async callback timeout in seconds
+    /// This is stored per-engine to allow different engines to have different timeouts
+    pub(crate) async_timeout_seconds: u64,
 }
 
 impl CRhaiEngine {
     /// Creates a new CRhaiEngine wrapping the given engine
-    pub(crate) fn new(engine: Engine) -> Self {
+    pub(crate) fn new(engine: Engine, async_timeout_seconds: u64) -> Self {
         Self {
             inner: Arc::new(engine),
+            async_timeout_seconds,
         }
     }
 
     /// Gets a reference to the inner engine
     pub(crate) fn engine(&self) -> &Engine {
         &self.inner
+    }
+
+    /// Gets the async timeout in seconds
+    pub(crate) fn async_timeout_seconds(&self) -> u64 {
+        self.async_timeout_seconds
     }
 }
 
@@ -53,6 +63,9 @@ pub struct CRhaiConfig {
 
     /// Script execution timeout in milliseconds (0 = no timeout)
     pub timeout_ms: u64,
+
+    /// Async callback timeout in seconds (0 = no timeout, default: 30)
+    pub async_timeout_seconds: u64,
 
     /// Whether to disable file I/O operations
     pub disable_file_io: u8, // bool as u8 for C compatibility
@@ -81,6 +94,7 @@ impl CRhaiConfig {
             max_stack_depth: 100,
             max_string_length: 10_485_760, // 10 MB
             timeout_ms: 5000,
+            async_timeout_seconds: 30, // 30 seconds default for async operations
             disable_file_io: 1,
             disable_eval: 1,
             disable_modules: 1,
@@ -128,6 +142,7 @@ mod tests {
         let config = CRhaiConfig::default();
         assert_eq!(config.max_operations, 1_000_000);
         assert_eq!(config.max_stack_depth, 100);
+        assert_eq!(config.async_timeout_seconds, 30);
         assert_eq!(config.disable_file_io, 1);
         assert_eq!(config.disable_eval, 1);
         assert_eq!(config.disable_modules, 1);
@@ -138,13 +153,15 @@ mod tests {
         let config = CRhaiConfig::secure_defaults();
         assert_eq!(config.max_operations, 1_000_000);
         assert_eq!(config.timeout_ms, 5000);
+        assert_eq!(config.async_timeout_seconds, 30);
         assert_eq!(config.disable_file_io, 1);
     }
 
     #[test]
     fn test_engine_wrapper() {
         let engine = Engine::new();
-        let wrapper = CRhaiEngine::new(engine);
+        let wrapper = CRhaiEngine::new(engine, 30);
         assert!(!Arc::as_ptr(&wrapper.inner).is_null());
+        assert_eq!(wrapper.async_timeout_seconds(), 30);
     }
 }

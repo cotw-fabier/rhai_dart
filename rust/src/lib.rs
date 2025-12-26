@@ -43,6 +43,7 @@ pub mod types;
 pub mod engine;
 pub mod values;
 pub mod functions;
+pub mod async_eval;
 
 #[cfg(test)]
 mod tests {

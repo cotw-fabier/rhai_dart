@@ -19,6 +19,7 @@ pub struct EngineConfig {
     max_stack_depth: Option<usize>,
     max_string_length: Option<usize>,
     timeout_ms: Option<u64>,
+    async_timeout_seconds: u64,
     disable_file_io: bool,
     disable_eval: bool,
     disable_modules: bool,
@@ -32,6 +33,7 @@ impl EngineConfig {
     /// - max_stack_depth: 100
     /// - max_string_length: 10MB
     /// - timeout_ms: 5000ms
+    /// - async_timeout_seconds: 30s
     /// - All dangerous features disabled (file I/O, eval, modules)
     pub fn secure_defaults() -> Self {
         Self {
@@ -39,6 +41,7 @@ impl EngineConfig {
             max_stack_depth: Some(100),
             max_string_length: Some(10_485_760), // 10MB
             timeout_ms: Some(5000),
+            async_timeout_seconds: 30,
             disable_file_io: true,
             disable_eval: true,
             disable_modules: true,
@@ -71,10 +74,20 @@ impl EngineConfig {
             } else {
                 Some(c_config.timeout_ms)
             },
+            async_timeout_seconds: if c_config.async_timeout_seconds == 0 {
+                30 // Default to 30 seconds if 0
+            } else {
+                c_config.async_timeout_seconds
+            },
             disable_file_io: c_config.disable_file_io != 0,
             disable_eval: c_config.disable_eval != 0,
             disable_modules: c_config.disable_modules != 0,
         }
+    }
+
+    /// Gets the async timeout in seconds.
+    pub fn async_timeout_seconds(&self) -> u64 {
+        self.async_timeout_seconds
     }
 
     /// Applies this configuration to a Rhai Engine.
@@ -148,6 +161,9 @@ pub extern "C" fn rhai_engine_new(config: *const CRhaiConfig) -> *mut CRhaiEngin
             EngineConfig::from_c_config(c_config)
         };
 
+        // Get the async timeout before creating the engine
+        let async_timeout_seconds = engine_config.async_timeout_seconds();
+
         // Create a new Rhai engine
         let mut engine = Engine::new();
 
@@ -155,12 +171,15 @@ pub extern "C" fn rhai_engine_new(config: *const CRhaiConfig) -> *mut CRhaiEngin
         engine_config.apply_to_engine(&mut engine);
 
         // Wrap in our opaque handle and return
-        let wrapper = CRhaiEngine::new(engine);
+        let wrapper = CRhaiEngine::new(engine, async_timeout_seconds);
         Box::into_raw(Box::new(wrapper))
     }}
 }
 
 /// Frees a Rhai engine instance.
+///
+/// This function cleans up the engine and removes any pending async futures
+/// associated with this engine from the global registry.
 ///
 /// # Safety
 ///
@@ -178,6 +197,13 @@ pub extern "C" fn rhai_engine_new(config: *const CRhaiConfig) -> *mut CRhaiEngin
 pub extern "C" fn rhai_engine_free(engine: *mut CRhaiEngine) {
     let _result = catch_panic! {{
         if !engine.is_null() {
+            // Note: In a per-engine future registry, we would clean up pending futures here.
+            // Since we're using a global registry, we log a debug message but can't
+            // distinguish which futures belong to this engine.
+            // This is acceptable as futures will be cleaned up on timeout or completion.
+            #[cfg(debug_assertions)]
+            eprintln!("[DEBUG] Freeing engine - pending futures (if any) will be cleaned up on timeout");
+
             unsafe {
                 // Reclaim ownership and drop
                 // This will decrement the Arc reference count
@@ -189,6 +215,10 @@ pub extern "C" fn rhai_engine_free(engine: *mut CRhaiEngine) {
 }
 
 /// Evaluates a Rhai script and returns the result as a JSON string.
+///
+/// This function runs the script within a Tokio runtime context to support
+/// async Dart function calls. The evaluation itself is synchronous, but
+/// any async Dart callbacks registered with the engine can complete properly.
 ///
 /// # Safety
 ///
@@ -244,8 +274,15 @@ pub extern "C" fn rhai_eval(
             }
         };
 
-        // Evaluate the script
+        // Evaluate the script directly - the Tokio runtime will be used by async callbacks
         let result: Result<Dynamic, Box<rhai::EvalAltResult>> = rhai_engine.eval(script_str);
+
+        // Check if async functions were invoked during eval
+        // Sync eval() should not be used with async functions - users should use evalAsync()
+        if crate::functions::check_and_clear_async_flag() {
+            set_last_error("Script attempted to call async functions. Use evalAsync() instead of eval() for scripts with async functions.");
+            return -1;
+        }
 
         match result {
             Ok(value) => {
@@ -286,7 +323,7 @@ pub extern "C" fn rhai_eval(
 ///
 /// This function extracts line numbers from syntax errors and formats
 /// runtime errors with their stack traces.
-fn format_rhai_error(err: &rhai::EvalAltResult) -> String {
+pub fn format_rhai_error(err: &rhai::EvalAltResult) -> String {
     use rhai::EvalAltResult;
 
     match err {
@@ -500,6 +537,7 @@ mod tests {
         assert_eq!(config.max_stack_depth, Some(100));
         assert_eq!(config.max_string_length, Some(10_485_760));
         assert_eq!(config.timeout_ms, Some(5000));
+        assert_eq!(config.async_timeout_seconds, 30);
         assert!(config.disable_file_io);
         assert!(config.disable_eval);
         assert!(config.disable_modules);
@@ -512,6 +550,7 @@ mod tests {
             max_stack_depth: 50,
             max_string_length: 5_242_880,
             timeout_ms: 3000,
+            async_timeout_seconds: 60,
             disable_file_io: 1,
             disable_eval: 0,
             disable_modules: 1,
@@ -522,6 +561,7 @@ mod tests {
         assert_eq!(config.max_stack_depth, Some(50));
         assert_eq!(config.max_string_length, Some(5_242_880));
         assert_eq!(config.timeout_ms, Some(3000));
+        assert_eq!(config.async_timeout_seconds, 60);
         assert!(config.disable_file_io);
         assert!(!config.disable_eval);
         assert!(config.disable_modules);
@@ -534,6 +574,7 @@ mod tests {
             max_stack_depth: 0,
             max_string_length: 0,
             timeout_ms: 0,
+            async_timeout_seconds: 0,
             disable_file_io: 0,
             disable_eval: 0,
             disable_modules: 0,
@@ -544,12 +585,20 @@ mod tests {
         assert_eq!(config.max_stack_depth, None);
         assert_eq!(config.max_string_length, None);
         assert_eq!(config.timeout_ms, None);
+        assert_eq!(config.async_timeout_seconds, 30); // Defaults to 30 when 0
     }
 
     #[test]
     fn test_engine_creation_with_defaults() {
         let engine = rhai_engine_new(std::ptr::null());
         assert!(!engine.is_null());
+
+        // Verify async timeout is set
+        unsafe {
+            let wrapper = &*engine;
+            assert_eq!(wrapper.async_timeout_seconds(), 30);
+        }
+
         rhai_engine_free(engine);
     }
 
@@ -560,6 +609,7 @@ mod tests {
             max_stack_depth: 50,
             max_string_length: 5_242_880,
             timeout_ms: 3000,
+            async_timeout_seconds: 60,
             disable_file_io: 1,
             disable_eval: 1,
             disable_modules: 1,
@@ -567,6 +617,13 @@ mod tests {
 
         let engine = rhai_engine_new(&c_config as *const CRhaiConfig);
         assert!(!engine.is_null());
+
+        // Verify async timeout is set correctly
+        unsafe {
+            let wrapper = &*engine;
+            assert_eq!(wrapper.async_timeout_seconds(), 60);
+        }
+
         rhai_engine_free(engine);
     }
 
@@ -598,6 +655,7 @@ mod tests {
             max_stack_depth: Some(10),
             max_string_length: Some(1024),
             timeout_ms: Some(100),
+            async_timeout_seconds: 15,
             disable_file_io: true,
             disable_eval: true,
             disable_modules: true,
@@ -671,6 +729,7 @@ mod tests {
             max_stack_depth: 100,
             max_string_length: 10_485_760,
             timeout_ms: 5000,
+            async_timeout_seconds: 30,
             disable_file_io: 1,
             disable_eval: 1,
             disable_modules: 1,

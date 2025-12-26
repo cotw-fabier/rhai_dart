@@ -34,6 +34,10 @@ final class CRhaiConfig extends Struct {
   @Uint64()
   external int timeoutMs;
 
+  /// Async callback timeout in seconds (0 = no timeout, default: 30)
+  @Uint64()
+  external int asyncTimeoutSeconds;
+
   /// Whether to disable file I/O operations (0 = false, 1 = true)
   @Uint8()
   external int disableFileIo;

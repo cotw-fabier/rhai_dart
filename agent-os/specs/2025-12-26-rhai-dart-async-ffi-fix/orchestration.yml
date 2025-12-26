@@ -1,0 +1,5 @@
+task_groups:
+  - name: "Task Group 6: Comprehensive Test Coverage"
+    claude_code_subagent: implementer
+  - name: "Task Group 7: Documentation Updates"
+    claude_code_subagent: implementer

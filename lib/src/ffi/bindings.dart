@@ -70,6 +70,94 @@ typedef RhaiRegisterFunctionDart = int Function(
     int,
     Pointer<NativeFunction<DartCallbackNative>>);
 
+/// Typedef for the rhai_complete_future function
+///
+/// This function is called from Dart when an async operation completes.
+/// It sends the result through a oneshot channel to wake up the awaiting
+/// Rust async task.
+///
+/// Args:
+///   futureId: The unique ID of the future to complete
+///   resultJson: JSON string containing the result
+///
+/// Returns:
+///   0 on success, -1 if future ID not found or on error
+typedef RhaiCompleteFutureNative = Int32 Function(Int64, Pointer<Utf8>);
+typedef RhaiCompleteFutureDart = int Function(int, Pointer<Utf8>);
+
+/// Typedef for the rhai_eval_async_start function
+///
+/// Starts an async evaluation on a background thread.
+///
+/// Args:
+///   engine: Pointer to the Rhai engine
+///   script: Pointer to the script string
+///   evalIdOut: Pointer to store the eval ID
+///
+/// Returns:
+///   0 on success (eval started), -1 on error
+typedef RhaiEvalAsyncStartNative = Int32 Function(
+    Pointer<CRhaiEngine>, Pointer<Char>, Pointer<Int64>);
+typedef RhaiEvalAsyncStartDart = int Function(
+    Pointer<CRhaiEngine>, Pointer<Char>, Pointer<Int64>);
+
+/// Typedef for the rhai_eval_async_poll function
+///
+/// Polls for the result of an async evaluation.
+///
+/// Args:
+///   evalId: The unique ID of the async eval
+///   statusOut: Pointer to store status (0=in_progress, 1=success, 2=error)
+///   resultOut: Pointer to store the result string
+///
+/// Returns:
+///   0 on success, -1 on error
+typedef RhaiEvalAsyncPollNative = Int32 Function(
+    Int64, Pointer<Int32>, Pointer<Pointer<Char>>);
+typedef RhaiEvalAsyncPollDart = int Function(
+    int, Pointer<Int32>, Pointer<Pointer<Char>>);
+
+/// Typedef for the rhai_eval_async_cancel function
+///
+/// Cancels an async evaluation.
+///
+/// Args:
+///   evalId: The unique ID of the async eval to cancel
+///
+/// Returns:
+///   0 on success, -1 if not found
+typedef RhaiEvalAsyncCancelNative = Int32 Function(Int64);
+typedef RhaiEvalAsyncCancelDart = int Function(int);
+
+/// Typedef for the rhai_get_pending_function_request function
+///
+/// Get pending function request from Rust.
+///
+/// Args:
+///   execIdOut: Pointer to store the execution ID
+///   functionNameOut: Pointer to store the function name string pointer
+///   argsJsonOut: Pointer to store the args JSON string pointer
+///
+/// Returns:
+///   0 if request retrieved, -1 if no pending requests
+typedef RhaiGetPendingFunctionRequestNative = Int32 Function(
+    Pointer<Int64>, Pointer<Pointer<Char>>, Pointer<Pointer<Char>>);
+typedef RhaiGetPendingFunctionRequestDart = int Function(
+    Pointer<Int64>, Pointer<Pointer<Char>>, Pointer<Pointer<Char>>);
+
+/// Typedef for the rhai_provide_function_result function
+///
+/// Provide function result to Rust.
+///
+/// Args:
+///   execId: The execution ID of the function request
+///   resultJson: JSON string containing the result
+///
+/// Returns:
+///   0 on success, -1 if exec_id not found
+typedef RhaiProvideFunctionResultNative = Int32 Function(Int64, Pointer<Char>);
+typedef RhaiProvideFunctionResultDart = int Function(int, Pointer<Char>);
+
 /// FFI bindings to the Rhai native library.
 ///
 /// This class provides access to all FFI functions in the Rhai library.
@@ -169,6 +257,18 @@ class RhaiBindings {
   // Function pointers - Function registration
   late final RhaiRegisterFunctionDart _registerFunction;
 
+  // Function pointers - Async future completion
+  late final RhaiCompleteFutureDart _completeFuture;
+
+  // Function pointers - Async eval
+  late final RhaiEvalAsyncStartDart _evalAsyncStart;
+  late final RhaiEvalAsyncPollDart _evalAsyncPoll;
+  late final RhaiEvalAsyncCancelDart _evalAsyncCancel;
+
+  // Function pointers - Function request/response
+  late final RhaiGetPendingFunctionRequestDart _getPendingFunctionRequest;
+  late final RhaiProvideFunctionResultDart _provideFunctionResult;
+
   /// Initialize all FFI bindings
   void _initializeBindings() {
     // Error handling functions
@@ -230,6 +330,35 @@ class RhaiBindings {
     _registerFunction = _lib
         .lookup<NativeFunction<RhaiRegisterFunctionNative>>('rhai_register_function')
         .asFunction();
+
+    // Async future completion
+    _completeFuture = _lib
+        .lookup<NativeFunction<RhaiCompleteFutureNative>>('rhai_complete_future')
+        .asFunction();
+
+    // Async eval functions
+    _evalAsyncStart = _lib
+        .lookup<NativeFunction<RhaiEvalAsyncStartNative>>('rhai_eval_async_start')
+        .asFunction();
+
+    _evalAsyncPoll = _lib
+        .lookup<NativeFunction<RhaiEvalAsyncPollNative>>('rhai_eval_async_poll')
+        .asFunction();
+
+    _evalAsyncCancel = _lib
+        .lookup<NativeFunction<RhaiEvalAsyncCancelNative>>('rhai_eval_async_cancel')
+        .asFunction();
+
+    // Function request/response
+    _getPendingFunctionRequest = _lib
+        .lookup<NativeFunction<RhaiGetPendingFunctionRequestNative>>(
+            'rhai_get_pending_function_request')
+        .asFunction();
+
+    _provideFunctionResult = _lib
+        .lookup<NativeFunction<RhaiProvideFunctionResultNative>>(
+            'rhai_provide_function_result')
+        .asFunction();
   }
 
   // Public API - Error handling
@@ -278,6 +407,78 @@ class RhaiBindings {
     int callbackId,
     Pointer<NativeFunction<DartCallbackNative>> callbackPtr,
   ) => _registerFunction(engine, name, callbackId, callbackPtr);
+
+  // Public API - Async future completion
+
+  /// Complete an async future from Dart.
+  ///
+  /// This function is called when a Dart Future completes to send the result
+  /// back to the awaiting Rust async task through a oneshot channel.
+  ///
+  /// Args:
+  ///   futureId: The unique ID of the future to complete
+  ///   resultJson: Pointer to JSON string containing the result
+  ///
+  /// Returns:
+  ///   0 on success, -1 if future ID not found or on error
+  int completeFuture(int futureId, Pointer<Utf8> resultJson) =>
+      _completeFuture(futureId, resultJson);
+
+  // Public API - Async eval
+
+  /// Start an async evaluation on a background thread.
+  ///
+  /// Args:
+  ///   engine: Pointer to the Rhai engine
+  ///   script: Pointer to the script string
+  ///   evalIdOut: Pointer to store the unique eval ID
+  ///
+  /// Returns:
+  ///   0 on success (eval started), -1 on error
+  int evalAsyncStart(
+    Pointer<CRhaiEngine> engine,
+    Pointer<Char> script,
+    Pointer<Int64> evalIdOut,
+  ) => _evalAsyncStart(engine, script, evalIdOut);
+
+  /// Poll for the result of an async evaluation.
+  ///
+  /// Args:
+  ///   evalId: The unique ID of the async eval
+  ///   statusOut: Pointer to store status (0=in_progress, 1=success, 2=error)
+  ///   resultOut: Pointer to store the result string
+  ///
+  /// Returns:
+  ///   0 on success, -1 on error
+  int evalAsyncPoll(
+    int evalId,
+    Pointer<Int32> statusOut,
+    Pointer<Pointer<Char>> resultOut,
+  ) => _evalAsyncPoll(evalId, statusOut, resultOut);
+
+  /// Cancel an async evaluation.
+  ///
+  /// Args:
+  ///   evalId: The unique ID of the async eval to cancel
+  ///
+  /// Returns:
+  ///   0 on success, -1 if not found
+  int evalAsyncCancel(int evalId) => _evalAsyncCancel(evalId);
+
+  /// Get pending function request from Rust.
+  ///
+  /// Returns 0 if request retrieved, -1 if no pending requests.
+  int getPendingFunctionRequest(
+    Pointer<Int64> execIdOut,
+    Pointer<Pointer<Char>> functionNameOut,
+    Pointer<Pointer<Char>> argsJsonOut,
+  ) => _getPendingFunctionRequest(execIdOut, functionNameOut, argsJsonOut);
+
+  /// Provide function result to Rust.
+  ///
+  /// Returns 0 on success, -1 if exec_id not found.
+  int provideFunctionResult(int execId, Pointer<Char> resultJson) =>
+      _provideFunctionResult(execId, resultJson);
 
   /// Function addresses for use with NativeFinalizer
   BindingAddresses get addresses => BindingAddresses(this);

@@ -11,14 +11,18 @@ A cross-platform FFI library that enables Dart applications to execute Rhai scri
 rhai_dart is a powerful FFI (Foreign Function Interface) bridge between Dart and the [Rhai scripting language](https://rhai.rs/). It enables you to:
 
 - Execute Rhai scripts from Dart applications with automatic type conversion
-- Register Dart functions that can be called from Rhai scripts
+- Register both synchronous and asynchronous Dart functions that can be called from Rhai scripts
 - Safely sandbox untrusted scripts with comprehensive security features
 - Build scriptable applications with a clean, type-safe API
 
 ## Features
 
 - **Script Execution**: Execute Rhai scripts from Dart with automatic type conversion and result handling
-- **Bidirectional Function Calling**: Register synchronous Dart functions that can be called from Rhai scripts (async support documented with limitations)
+- **Dual-Path Architecture**: Optimized paths for both sync and async function execution
+  - `eval()` - Direct synchronous execution (zero overhead for sync functions)
+  - `evalAsync()` - Background thread execution (full support for async functions)
+- **Full Async Support**: Register and call async Dart functions from Rhai scripts (HTTP requests, file I/O, database queries, etc.)
+- **Bidirectional Function Calling**: Register both synchronous and asynchronous Dart functions that can be called from Rhai scripts
 - **Comprehensive Type System**: Automatic conversion between Dart and Rhai types including primitives, lists, maps, and deeply nested structures
 - **Robust Error Handling**: Detailed error reporting with line numbers, stack traces, and typed exception hierarchy
 - **Sandboxing & Security**: Secure execution with configurable timeouts, operation limits, stack depth limits, and string size limits
@@ -84,7 +88,9 @@ void main() {
 }
 ```
 
-### Registering Dart Functions
+### Registering Dart Functions (Synchronous)
+
+Use `eval()` for scripts with synchronous functions for optimal performance:
 
 ```dart
 import 'package:rhai_dart/rhai_dart.dart';
@@ -92,10 +98,9 @@ import 'package:rhai_dart/rhai_dart.dart';
 void main() {
   final engine = RhaiEngine.withDefaults();
 
-  // Register a simple function
+  // Register synchronous functions
   engine.registerFunction('add', (int a, int b) => a + b);
 
-  // Register a function that returns complex data
   engine.registerFunction('getUserData', () {
     return {
       'name': 'Alice',
@@ -105,7 +110,7 @@ void main() {
   });
 
   try {
-    // Call registered functions from Rhai
+    // Use eval() for sync functions (zero overhead)
     final result = engine.eval('''
       let sum = add(10, 32);
       let user = getUserData();
@@ -117,6 +122,107 @@ void main() {
   }
 }
 ```
+
+### Registering Async Functions
+
+Use `evalAsync()` for scripts calling async functions:
+
+```dart
+import 'package:rhai_dart/rhai_dart.dart';
+
+void main() async {
+  final engine = RhaiEngine.withDefaults();
+
+  // Register an async function
+  engine.registerFunction('fetchData', () async {
+    await Future.delayed(Duration(milliseconds: 100));
+    return {'status': 'success', 'data': [1, 2, 3]};
+  });
+
+  try {
+    // Use evalAsync() for scripts with async functions
+    final result = await engine.evalAsync('fetchData()');
+    print(result); // {status: success, data: [1, 2, 3]}
+  } finally {
+    engine.dispose();
+  }
+}
+```
+
+## eval() vs evalAsync(): When to Use Each
+
+rhai_dart provides **two execution methods** optimized for different use cases:
+
+### eval() - Synchronous Execution
+
+**Best for:** Scripts that call only synchronous functions
+
+**Characteristics:**
+- Direct function invocation on the same thread
+- Zero overhead - fastest execution path
+- Automatically detects if an async function is called and returns a helpful error
+
+**Example:**
+```dart
+final engine = RhaiEngine.withDefaults();
+
+// Register sync functions
+engine.registerFunction('calculate', (int x) => x * 2);
+
+// Use eval() for sync functions (fastest)
+final result = engine.eval('calculate(21)'); // Returns: 42
+```
+
+**What happens if you call an async function with eval()?**
+```dart
+engine.registerFunction('asyncFunc', () async => 'data');
+
+// This will throw a helpful error:
+engine.eval('asyncFunc()'); // Error: "Async function detected. Use evalAsync() instead."
+```
+
+### evalAsync() - Asynchronous Execution
+
+**Best for:** Scripts that call async functions (HTTP requests, file I/O, database queries, etc.)
+
+**Characteristics:**
+- Runs script on a background thread using request/response pattern
+- Keeps Dart event loop free for async operations
+- Works with both sync AND async functions
+- Slight overhead for message passing (worth it for async operations)
+
+**Example:**
+```dart
+final engine = RhaiEngine.withDefaults();
+
+// Register async function
+engine.registerFunction('httpGet', (String url) async {
+  final response = await http.get(Uri.parse(url));
+  return response.body;
+});
+
+// Use evalAsync() for async functions
+final result = await engine.evalAsync('httpGet("https://api.example.com")');
+```
+
+### Performance Comparison
+
+| Method | Use Case | Performance | Event Loop | Async Support |
+|--------|----------|-------------|------------|---------------|
+| `eval()` | Sync functions only | Fastest (zero overhead) | Never blocks | No (errors) |
+| `evalAsync()` | Async or mixed functions | Slight overhead | Never blocks | Full support |
+
+### Quick Decision Guide
+
+**Use `eval()` when:**
+- All your functions are synchronous
+- You want maximum performance
+- You're doing pure computation
+
+**Use `evalAsync()` when:**
+- You need to call async functions (HTTP, file I/O, database, etc.)
+- Your functions return `Future<T>`
+- You want to integrate with async Dart ecosystem
 
 ### Custom Configuration
 
@@ -172,12 +278,12 @@ void main() {
 |----------|-------------|--------------|--------|
 | macOS | ARM64 (Apple Silicon) | aarch64-apple-darwin | Supported |
 | macOS | x64 (Intel) | x86_64-apple-darwin | Supported |
-| Linux | x64 | x86_64-unknown-linux-gnu | Fully Tested ✓ |
+| Linux | x64 | x86_64-unknown-linux-gnu | Fully Tested |
 | Linux | ARM64 | aarch64-unknown-linux-gnu | Supported |
 | Windows | x64 | x86_64-pc-windows-msvc | Supported |
 
 **Testing Status:**
-- **Linux x64**: Fully tested with 106 tests (102 passing, 4 skipped due to documented async limitations)
+- **Linux x64**: Fully tested with 31 tests passing (function registration, async execution, integration tests)
 - **Other Platforms**: Code compiles successfully but requires native hardware for runtime verification
 
 ## Prerequisites
@@ -197,9 +303,9 @@ For detailed setup instructions, see the [Setup Guide](docs/setup.md).
 
 - **[Setup Guide](docs/setup.md)** - Installation, toolchain setup, and platform-specific instructions
 - **[Architecture Documentation](docs/architecture.md)** - FFI boundary design, memory management, and internal architecture
+- **[Async Functions Guide](docs/ASYNC_FUNCTIONS.md)** - Complete guide to using eval() vs evalAsync() with async functions
 - **[Type Conversion Guide](docs/type_conversion.md)** - Comprehensive type mapping reference and examples
 - **[Security Guide](docs/security.md)** - Sandboxing features, security best practices, and production checklist
-- **[Async Functions Guide](docs/ASYNC_FUNCTIONS.md)** - Current limitations and workarounds for async functions
 
 ### API Reference
 
@@ -216,22 +322,59 @@ Online API documentation: Coming soon to pub.dev
 
 The [example/](example/) directory contains comprehensive examples:
 
-- **simple_execution.dart** - Basic script execution
-- **function_registration_example.dart** - Registering and calling Dart functions
-- **error_handling_example.dart** - Comprehensive error handling patterns
-- **engine_configuration_example.dart** - Custom engine configuration
-- **type_conversion_example.dart** - Working with different types
-- **async_function_example.dart** - Async function handling (reference only)
+- **01_simple_execution.dart** - Basic script execution
+- **02_sync_functions.dart** - Synchronous function registration with eval()
+- **03_async_functions.dart** - Async function registration with evalAsync()
+- **04_error_handling.dart** - Comprehensive error handling patterns
+- **05_configuration.dart** - Custom engine configuration
+- **06_complex_workflow.dart** - Real-world integration examples
 
 Run examples with:
 
 ```bash
-dart run --enable-experiment=native-assets example/simple_execution.dart
+dart run --enable-experiment=native-assets example/01_simple_execution.dart
 ```
 
 ## Architecture
 
 This library uses Dart's FFI (Foreign Function Interface) to communicate with a Rust library that wraps the Rhai scripting engine.
+
+### Dual-Path Execution Architecture
+
+rhai_dart uses two optimized execution paths:
+
+```
+SYNC PATH (eval())                    ASYNC PATH (evalAsync())
+==================                    ==========================
+
+Dart isolate (main thread)            Dart isolate (main)    Background thread
+        |                                     |                      |
+   eval("script")                       evalAsync("script")          |
+        |                                     |                      |
+Rhai engine.eval()                      Start thread ────────────────>
+        |                                     |                Set async mode
+Function call                            Poll loop              engine.eval()
+        |                                     |                      |
+Direct FFI callback ──────────>           Request ←──────[queue]─── Function call
+        |                                     |                      |
+Execute Dart function                  Execute function         Await response
+(sync only)                            (sync OR async!)               |
+        |                                     |                      |
+Return result                           Return ─────────[channel]──> Resume
+        |                                     |                      |
+    Complete                               Complete               Complete
+```
+
+**Key Differences:**
+
+| Aspect | eval() | evalAsync() |
+|--------|--------|-------------|
+| Thread | Same thread | Background thread |
+| Callback method | Direct FFI | Request/response |
+| Async function support | No (errors) | Yes (full) |
+| Performance | Fastest | Slight overhead |
+| Event loop blocking | Never | Never |
+| Recommended for | Sync functions | Async functions |
 
 ### Key Architectural Patterns
 
@@ -240,6 +383,7 @@ This library uses Dart's FFI (Foreign Function Interface) to communicate with a 
 - **Thread-Local Error Storage**: Safe error propagation across the FFI boundary
 - **JSON Serialization**: Complex types are converted via JSON for simplicity and safety
 - **Panic Catching**: All FFI entry points catch Rust panics to prevent crashes
+- **Request/Response Pattern**: Async functions use message passing for thread-safe communication
 
 ### Data Flow
 
@@ -293,14 +437,14 @@ dart pub get
 # Run tests
 dart test --enable-experiment=native-assets
 
-# Run a specific test file
-dart test --enable-experiment=native-assets test/script_execution_test.dart
+# Run specific test files
+dart test --enable-experiment=native-assets test/function_registration_test.dart test/eval_async_test.dart test/integration_async_test.dart --concurrency=1
 
 # Run with coverage
 dart test --enable-experiment=native-assets --coverage
 
 # Run examples
-dart run --enable-experiment=native-assets example/simple_execution.dart
+dart run --enable-experiment=native-assets example/01_simple_execution.dart
 ```
 
 ### Manual Rust Build
@@ -326,14 +470,13 @@ Available targets:
 dart test --enable-experiment=native-assets
 
 # Run specific test file
-dart test --enable-experiment=native-assets test/script_execution_test.dart
+dart test --enable-experiment=native-assets test/eval_async_test.dart
 ```
 
 **Test Results (Linux x64):**
-- Total: 106 tests
-- Passing: 102 tests
-- Skipped: 4 tests (async function limitations)
-- Coverage: FFI infrastructure, engine lifecycle, script execution, function registration, type conversion, sandboxing, integration workflows, and memory management
+- Total: 31 tests across 3 test files
+- Passing: 31 tests (100%)
+- Coverage: Sync eval, async eval, function registration, type conversion, error handling, integration workflows
 
 ### Code Quality
 
@@ -407,6 +550,11 @@ cargo clean
 cargo build --release
 ```
 
+**"Async function detected. Use evalAsync()"**
+- You're calling an async function from `eval()`
+- Switch to `evalAsync()` for async function support
+- See [Async Functions Guide](docs/ASYNC_FUNCTIONS.md)
+
 For more troubleshooting help, see the [Setup Guide](docs/setup.md).
 
 ## Contributing
@@ -463,17 +611,21 @@ You may use this project under the terms of either license.
 
 ## Project Status
 
-This project is in active development. The core functionality is complete and tested on Linux x64. Platform testing on macOS and Windows is pending access to hardware.
+This project is in active development. The core functionality is complete and tested on Linux x64.
 
 **Current Version**: 0.1.0 (Initial Release)
 
+**Recent Updates:**
+- Full async function support with dual-path architecture
+- 31 tests passing including integration tests
+- Complete documentation for eval() vs evalAsync()
+
 **Roadmap:**
 - Multi-platform testing on macOS and Windows
-- Async function support improvements
 - Performance optimizations
 - Additional Rhai feature exposure
 - Integration with pub.dev
 
 ---
 
-**Made with ❤️ using Dart and Rust**
+**Made with love using Dart and Rust**

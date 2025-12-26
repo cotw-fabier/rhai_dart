@@ -14,6 +14,7 @@
 /// final config = RhaiConfig.custom(
 ///   maxOperations: 500000,
 ///   timeoutMs: 3000,
+///   asyncTimeout: Duration(seconds: 60),
 ///   disableFileIo: true,
 /// );
 /// final engine = RhaiEngine.withConfig(config);
@@ -27,6 +28,7 @@
 /// - **maxStackDepth**: Prevents stack overflow from deep recursion
 /// - **maxStringLength**: Prevents excessive memory usage from large strings
 /// - **timeoutMs**: Prevents scripts from running indefinitely
+/// - **asyncTimeout**: Prevents async operations from hanging indefinitely
 /// - **disableFileIo**: Prevents file system access (recommended for untrusted scripts)
 /// - **disableEval**: Prevents dynamic code execution (recommended for untrusted scripts)
 /// - **disableModules**: Prevents loading external code (recommended for untrusted scripts)
@@ -58,6 +60,7 @@ import 'package:rhai_dart/src/ffi/native_types.dart';
 /// final config = RhaiConfig.custom(
 ///   maxOperations: 10000000,
 ///   timeoutMs: 30000,
+///   asyncTimeout: Duration(seconds: 120),
 /// );
 /// ```
 ///
@@ -99,6 +102,15 @@ class RhaiConfig {
   /// This timeout ensures scripts complete within a reasonable time frame.
   final int timeoutMs;
 
+  /// Async callback timeout duration.
+  ///
+  /// This controls how long async Dart functions can take to complete before timing out.
+  /// Default: Duration(seconds: 30)
+  ///
+  /// This prevents async operations from hanging indefinitely.
+  /// Increase this for operations that legitimately take longer (e.g., large file downloads).
+  final Duration asyncTimeout;
+
   /// Whether to disable file I/O operations.
   ///
   /// When true, scripts cannot access the file system.
@@ -135,6 +147,7 @@ class RhaiConfig {
   /// final config = RhaiConfig.custom(
   ///   maxOperations: 500000,
   ///   timeoutMs: 3000,
+  ///   asyncTimeout: Duration(seconds: 60),
   /// );
   /// ```
   ///
@@ -144,6 +157,7 @@ class RhaiConfig {
     int? maxStackDepth,
     int? maxStringLength,
     int? timeoutMs,
+    Duration? asyncTimeout,
     bool? disableFileIo,
     bool? disableEval,
     bool? disableModules,
@@ -151,6 +165,7 @@ class RhaiConfig {
         maxStackDepth = maxStackDepth ?? 100,
         maxStringLength = maxStringLength ?? 10485760,
         timeoutMs = timeoutMs ?? 5000,
+        asyncTimeout = asyncTimeout ?? const Duration(seconds: 30),
         disableFileIo = disableFileIo ?? true,
         disableEval = disableEval ?? true,
         disableModules = disableModules ?? true {
@@ -164,6 +179,7 @@ class RhaiConfig {
   /// - maxStackDepth: 100
   /// - maxStringLength: 10 MB
   /// - timeoutMs: 5,000 ms (5 seconds)
+  /// - asyncTimeout: 30 seconds
   /// - All sandboxing features enabled (file I/O, eval, modules disabled)
   ///
   /// Example:
@@ -195,6 +211,7 @@ class RhaiConfig {
       maxStackDepth: 0,
       maxStringLength: 0,
       timeoutMs: 0,
+      asyncTimeout: Duration.zero,
       disableFileIo: false,
       disableEval: false,
       disableModules: false,
@@ -237,6 +254,14 @@ class RhaiConfig {
       );
     }
 
+    if (asyncTimeout.isNegative) {
+      throw ArgumentError.value(
+        asyncTimeout,
+        'asyncTimeout',
+        'Must be non-negative (Duration.zero for no timeout)',
+      );
+    }
+
     // Warn about potentially dangerous configurations in debug mode
     assert(() {
       if (maxOperations == 0) {
@@ -250,6 +275,10 @@ class RhaiConfig {
       if (timeoutMs == 0) {
         print('WARNING: timeoutMs is 0 (no timeout). '
             'This may allow scripts to run indefinitely.');
+      }
+      if (asyncTimeout == Duration.zero) {
+        print('WARNING: asyncTimeout is 0 (no timeout). '
+            'This may allow async operations to hang indefinitely.');
       }
       if (!disableFileIo) {
         print('WARNING: File I/O is enabled. '
@@ -277,6 +306,7 @@ class RhaiConfig {
     config.ref.maxStackDepth = maxStackDepth;
     config.ref.maxStringLength = maxStringLength;
     config.ref.timeoutMs = timeoutMs;
+    config.ref.asyncTimeoutSeconds = asyncTimeout.inSeconds;
     config.ref.disableFileIo = disableFileIo ? 1 : 0;
     config.ref.disableEval = disableEval ? 1 : 0;
     config.ref.disableModules = disableModules ? 1 : 0;
@@ -290,6 +320,7 @@ class RhaiConfig {
         '  maxStackDepth: $maxStackDepth,\n'
         '  maxStringLength: $maxStringLength,\n'
         '  timeoutMs: $timeoutMs,\n'
+        '  asyncTimeout: $asyncTimeout,\n'
         '  disableFileIo: $disableFileIo,\n'
         '  disableEval: $disableEval,\n'
         '  disableModules: $disableModules\n'
@@ -304,6 +335,7 @@ class RhaiConfig {
         other.maxStackDepth == maxStackDepth &&
         other.maxStringLength == maxStringLength &&
         other.timeoutMs == timeoutMs &&
+        other.asyncTimeout == asyncTimeout &&
         other.disableFileIo == disableFileIo &&
         other.disableEval == disableEval &&
         other.disableModules == disableModules;
@@ -316,6 +348,7 @@ class RhaiConfig {
       maxStackDepth,
       maxStringLength,
       timeoutMs,
+      asyncTimeout,
       disableFileIo,
       disableEval,
       disableModules,

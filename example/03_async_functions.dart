@@ -1,293 +1,457 @@
-/// Example 3: Async Function Registration
+/// Example 3: Async Function Registration and evalAsync()
 ///
-/// This example demonstrates the RECOMMENDED approach for handling async data
-/// in Rhai scripts.
+/// This example demonstrates the dual-path architecture of rhai_dart:
+/// - Part 1: Using eval() with synchronous functions (fastest)
+/// - Part 2: Using evalAsync() with async functions (full async support)
+/// - Part 3: Best practices and when to use each method
 ///
-/// IMPORTANT NOTE: Due to fundamental limitations in Dart's FFI callback system,
-/// async functions that depend on the event loop (like Future.delayed, HTTP requests,
-/// or file I/O) cannot reliably complete when called from within FFI callbacks.
-///
-/// The Dart event loop cannot run while inside a synchronous FFI callback,
-/// preventing Futures from completing. This is a known limitation documented
-/// in docs/ASYNC_FUNCTIONS.md.
-///
-/// CURRENT RECOMMENDATION:
-/// Use synchronous functions for all registered callbacks. Pre-fetch any async
-/// data before calling eval() and provide it via sync functions.
-///
-/// This example demonstrates WORKING patterns for handling async data.
+/// rhai_dart provides complete async function support through a dual-path
+/// architecture that optimizes for both sync and async use cases.
 
 import 'dart:async';
 import 'package:rhai_dart/rhai_dart.dart';
 
 void main() async {
-  print('=== Example 3: Async Data Handling (Best Practices) ===\n');
+  print('=== Example 3: Dual-Path Architecture Demo ===\n');
 
-  print('This example demonstrates the RECOMMENDED approach for async data:');
-  print('- Pre-fetch async data BEFORE creating the engine');
-  print('- Register synchronous functions that use the pre-fetched data');
-  print('- Use closures to capture async data');
-  print('See docs/ASYNC_FUNCTIONS.md for technical details.\n');
+  // =================================================================
+  // PART 1: Synchronous Functions with eval()
+  // =================================================================
+  print('PART 1: Synchronous Functions with eval()');
+  print('=' * 50);
+
+  await demonstrateSyncPath();
+
+  print('\n');
+
+  // =================================================================
+  // PART 2: Asynchronous Functions with evalAsync()
+  // =================================================================
+  print('PART 2: Asynchronous Functions with evalAsync()');
+  print('=' * 50);
+
+  await demonstrateAsyncPath();
+
+  print('\n');
+
+  // =================================================================
+  // PART 3: Best Practices
+  // =================================================================
+  print('PART 3: Best Practices and Decision Guide');
+  print('=' * 50);
+
+  await demonstrateBestPractices();
+
+  print('\n=== All examples completed successfully! ===\n');
+  printSummary();
+}
+
+/// Demonstrates the synchronous eval() path
+Future<void> demonstrateSyncPath() async {
+  print('\n1.1 Basic Sync Functions');
+  print('-' * 30);
 
   final engine = RhaiEngine.withDefaults();
 
   try {
-    // Example 1: Pre-fetch async data and use in sync function
-    print('Example 1: Pre-fetching async data');
-    print('----------------------------------------');
+    // Register synchronous functions
+    engine.registerFunction('add', (int a, int b) => a + b);
+    engine.registerFunction('multiply', (int a, int b) => a * b);
 
-    // Fetch data asynchronously BEFORE registering functions
-    final userData = await fetchUserData();
-    print('Pre-fetched user data: $userData');
-
-    // Register a synchronous function that uses the pre-fetched data
-    engine.registerFunction('get_user_data', () {
-      return userData;
-    });
-
-    // Now use it in a script - works perfectly!
-    final result1 = engine.eval('get_user_data()');
-    print('Script result: $result1');
-    print('User name: ${(result1 as Map)['name']}\n');
-
-    // Example 2: Multiple async sources
-    print('Example 2: Multiple async data sources');
-    print('----------------------------------------');
-
-    // Pre-fetch all async data
-    final weatherData = await fetchWeatherData();
-    final stockData = await fetchStockData();
-
-    print('Pre-fetched weather: $weatherData');
-    print('Pre-fetched stocks: $stockData');
-
-    // Register sync functions that use pre-fetched data
-    engine.registerFunction('get_weather', () => weatherData);
-    engine.registerFunction('get_stock_price', (String symbol) {
-      return stockData[symbol] ?? 0.0;
-    });
-
-    // Use in Rhai script
-    final result2 = engine.eval('''
-      let weather = get_weather();
-      let stock = get_stock_price("AAPL");
-      #{
-        temperature: weather.temp,
-        condition: weather.condition,
-        stock_price: stock,
-        summary: "Weather: " + weather.condition + ", AAPL: " + stock
-      }
-    ''');
-    print('Complex result: $result2\n');
-
-    // Example 3: Using closures to capture async data
-    print('Example 3: Closures with cached data');
-    print('----------------------------------------');
-
-    final cachedResponse = await simulateHttpRequest();
-    print('Cached HTTP response: $cachedResponse');
-
-    // The closure captures the cached response
-    engine.registerFunction('get_cached_response', () {
-      return cachedResponse;
-    });
-
-    final result3 = engine.eval('get_cached_response()');
-    print('Result: $result3\n');
-
-    // Example 4: Dynamic data provider pattern
-    print('Example 4: Data provider pattern');
-    print('----------------------------------------');
-
-    // Pre-fetch configuration
-    final config = await fetchConfiguration();
-    print('Configuration loaded: $config');
-
-    // Create a data provider that uses the config
-    engine.registerFunction('get_config', (String key) {
-      return config[key] ?? 'default';
-    });
-
-    final result4 = engine.eval('''
-      let api_url = get_config("api_url");
-      let timeout = get_config("timeout");
-      #{url: api_url, timeout: timeout}
-    ''');
-    print('Config access: $result4\n');
-
-    // Example 5: Real-world pattern - data pipeline
-    print('Example 5: Real-world data pipeline');
-    print('----------------------------------------');
-
-    // Step 1: Fetch all required data
-    print('Fetching data from multiple sources...');
-    final users = await fetchUserList();
-    final permissions = await fetchPermissions();
-    final settings = await fetchSettings();
-
-    print('  Users loaded: ${users.length}');
-    print('  Permissions loaded: ${permissions.length}');
-    print('  Settings loaded: ${settings.length}');
-
-    // Step 2: Register data access functions
-    engine.registerFunction('get_user', (int id) {
-      return users.firstWhere(
-        (u) => u['id'] == id,
-        orElse: () => {'error': 'User not found'},
-      );
-    });
-
-    engine.registerFunction('has_permission', (int userId, String permission) {
-      final userPermissions = permissions[userId] ?? [];
-      return userPermissions.contains(permission);
-    });
-
-    engine.registerFunction('get_setting', (String key) {
-      return settings[key] ?? 'default';
-    });
-
-    // Step 3: Use in complex business logic
-    final result5 = engine.eval('''
-      let user_id = 1;
-      let user = get_user(user_id);
-
-      let can_edit = has_permission(user_id, "edit");
-      let can_delete = has_permission(user_id, "delete");
-      let theme = get_setting("theme");
-
-      #{
-        user: user.name,
-        permissions: #{edit: can_edit, delete: can_delete},
-        theme: theme,
-        access_level: if can_delete { "admin" } else if can_edit { "editor" } else { "viewer" }
-      }
+    // Use eval() for sync functions - zero overhead
+    final result = engine.eval('''
+      let x = add(10, 20);
+      let y = multiply(x, 2);
+      #{sum: x, product: y}
     ''');
 
-    print('Business logic result: $result5\n');
-
-    // Example 6: Refresh pattern
-    print('Example 6: Data refresh pattern');
-    print('----------------------------------------');
-
-    // Initial data
-    var currentData = await fetchLiveData();
-    print('Initial data: $currentData');
-
-    engine.registerFunction('get_live_data', () {
-      return currentData;
-    });
-
-    print('First eval:');
-    final firstResult = engine.eval('get_live_data()');
-    print('  Result: $firstResult');
-
-    // Simulate data refresh
-    print('\nRefreshing data...');
-    currentData = await fetchLiveData();
-    print('Refreshed data: $currentData');
-
-    // Re-register with new data (or the closure will capture the updated value)
-    engine.registerFunction('get_live_data', () {
-      return currentData;
-    });
-
-    print('Second eval:');
-    final secondResult = engine.eval('get_live_data()');
-    print('  Result: $secondResult\n');
-
-    print('=== All examples completed successfully! ===');
-    print('\nKEY TAKEAWAYS:');
-    print('1. Pre-fetch all async data BEFORE registering functions');
-    print('2. Use synchronous functions that return pre-fetched data');
-    print('3. Use closures to capture async data');
-    print('4. Refresh data between eval() calls if needed');
-    print('5. This pattern works perfectly for HTTP, database, file I/O, etc.');
+    print('Result: $result');
+    print('Performance: Zero overhead - direct FFI callback');
   } finally {
     engine.dispose();
-    print('\nEngine disposed.');
+  }
+
+  print('\n1.2 Complex Sync Data');
+  print('-' * 30);
+
+  final engine2 = RhaiEngine.withDefaults();
+
+  try {
+    // Sync function returning complex data
+    engine2.registerFunction('getUserProfile', (int userId) {
+      return {
+        'id': userId,
+        'name': 'Alice',
+        'email': 'alice@example.com',
+        'roles': ['admin', 'editor'],
+        'settings': {'theme': 'dark', 'notifications': true}
+      };
+    });
+
+    final result = engine2.eval('''
+      let profile = getUserProfile(123);
+      #{
+        name: profile.name,
+        is_admin: profile.roles.contains("admin"),
+        theme: profile.settings.theme
+      }
+    ''');
+
+    print('Result: $result');
+  } finally {
+    engine2.dispose();
+  }
+
+  print('\n1.3 Async Function Detection (Error Handling)');
+  print('-' * 30);
+
+  final engine3 = RhaiEngine.withDefaults();
+
+  try {
+    // Register an async function
+    engine3.registerFunction('asyncOperation', () async {
+      await Future.delayed(Duration(milliseconds: 10));
+      return 'data';
+    });
+
+    try {
+      // This will throw a helpful error
+      engine3.eval('asyncOperation()');
+    } on RhaiException catch (e) {
+      // Catch the base exception class
+      print('Expected error caught:');
+      print('  ${e.message}');
+      print('  This guides users to use evalAsync() instead');
+    }
+  } finally {
+    engine3.dispose();
   }
 }
 
-/// Simulates fetching user data asynchronously
-Future<Map<String, dynamic>> fetchUserData() async {
-  await Future.delayed(Duration(milliseconds: 50));
-  return {
-    'name': 'Alice',
-    'age': 30,
-    'email': 'alice@example.com',
-  };
+/// Demonstrates the asynchronous evalAsync() path
+Future<void> demonstrateAsyncPath() async {
+  print('\n2.1 Basic Async Functions');
+  print('-' * 30);
+
+  final engine = RhaiEngine.withDefaults();
+
+  try {
+    // Register async function with delay
+    engine.registerFunction('fetchData', (String key) async {
+      await Future.delayed(Duration(milliseconds: 50));
+      return 'value_for_$key';
+    });
+
+    // Use evalAsync() for async functions
+    final result = await engine.evalAsync('fetchData("user_123")');
+    print('Result: $result');
+    print('Performance: Slight overhead for message passing, full async support');
+  } finally {
+    engine.dispose();
+  }
+
+  print('\n2.2 Simulated HTTP Request');
+  print('-' * 30);
+
+  final engine2 = RhaiEngine.withDefaults();
+
+  try {
+    // Simulate HTTP GET request
+    engine2.registerFunction('httpGet', (String url) async {
+      print('  [Simulating HTTP GET to $url]');
+      await Future.delayed(Duration(milliseconds: 100));
+
+      // Simulate JSON response
+      return {
+        'status': 200,
+        'data': {
+          'id': 1,
+          'name': 'John Doe',
+          'email': 'john@example.com'
+        }
+      };
+    });
+
+    final result = await engine2.evalAsync('''
+      let response = httpGet("https://api.example.com/users/1");
+      #{
+        status: response.status,
+        user_name: response.data.name,
+        user_email: response.data.email
+      }
+    ''');
+
+    print('Result: $result');
+  } finally {
+    engine2.dispose();
+  }
+
+  print('\n2.3 Mixing Sync and Async Functions');
+  print('-' * 30);
+
+  final engine3 = RhaiEngine.withDefaults();
+
+  try {
+    // Mix of sync and async functions
+    engine3.registerFunction('calculate', (int x) => x * 2);
+
+    engine3.registerFunction('fetchConfig', () async {
+      await Future.delayed(Duration(milliseconds: 30));
+      return {'multiplier': 10, 'offset': 5};
+    });
+
+    // evalAsync() works with BOTH sync and async functions
+    final result = await engine3.evalAsync('''
+      let computed = calculate(21);      // Sync function
+      let config = fetchConfig();        // Async function
+      let final_value = computed + config.offset;
+      #{computed: computed, config: config, final: final_value}
+    ''');
+
+    print('Result: $result');
+  } finally {
+    engine3.dispose();
+  }
+
+  print('\n2.4 Multiple Async Operations');
+  print('-' * 30);
+
+  final engine4 = RhaiEngine.withDefaults();
+
+  try {
+    engine4.registerFunction('fetchUser', (int id) async {
+      await Future.delayed(Duration(milliseconds: 20));
+      return {'id': id, 'name': 'User$id'};
+    });
+
+    engine4.registerFunction('fetchPosts', (int userId) async {
+      await Future.delayed(Duration(milliseconds: 30));
+      return [
+        {'id': 1, 'title': 'Post 1'},
+        {'id': 2, 'title': 'Post 2'}
+      ];
+    });
+
+    final result = await engine4.evalAsync('''
+      let user = fetchUser(123);
+      let posts = fetchPosts(123);
+      #{
+        user_name: user.name,
+        post_count: posts.len(),
+        first_post: posts[0].title
+      }
+    ''');
+
+    print('Result: $result');
+  } finally {
+    engine4.dispose();
+  }
+
+  print('\n2.5 Error Handling in Async Functions');
+  print('-' * 30);
+
+  final engine5 = RhaiEngine.withDefaults();
+
+  try {
+    engine5.registerFunction('riskyOperation', (bool shouldFail) async {
+      await Future.delayed(Duration(milliseconds: 20));
+      if (shouldFail) {
+        throw Exception('Operation failed as requested');
+      }
+      return 'success';
+    });
+
+    // Success case
+    final successResult = await engine5.evalAsync('riskyOperation(false)');
+    print('Success result: $successResult');
+
+    // Error case
+    try {
+      await engine5.evalAsync('riskyOperation(true)');
+    } on RhaiException catch (e) {
+      print('Expected error caught:');
+      print('  ${e.message}');
+    }
+  } finally {
+    engine5.dispose();
+  }
+
+  print('\n2.6 Concurrent evalAsync() Calls');
+  print('-' * 30);
+
+  final engine6 = RhaiEngine.withDefaults();
+
+  try {
+    engine6.registerFunction('processItem', (int item) async {
+      await Future.delayed(Duration(milliseconds: 20));
+      return item * 2;
+    });
+
+    // Run multiple eval() calls concurrently
+    print('  Running 3 concurrent evalAsync() calls...');
+    final results = await Future.wait([
+      engine6.evalAsync('processItem(10)'),
+      engine6.evalAsync('processItem(20)'),
+      engine6.evalAsync('processItem(30)'),
+    ]);
+
+    print('  Results: $results');
+  } finally {
+    engine6.dispose();
+  }
 }
 
-/// Simulates HTTP request
-Future<String> simulateHttpRequest() async {
-  await Future.delayed(Duration(milliseconds: 30));
-  return 'HTTP response data';
+/// Demonstrates best practices and decision-making
+Future<void> demonstrateBestPractices() async {
+  print('\n3.1 When to Use eval() vs evalAsync()');
+  print('-' * 30);
+
+  print('''
+Use eval() when:
+  - All functions are synchronous
+  - You want maximum performance (zero overhead)
+  - You're doing pure computation
+
+Use evalAsync() when:
+  - Any function is async (returns Future<T>)
+  - You need HTTP requests, file I/O, database queries
+  - You want to integrate with async Dart ecosystem
+''');
+
+  print('\n3.2 Performance Comparison');
+  print('-' * 30);
+
+  // Sync path performance
+  final syncEngine = RhaiEngine.withDefaults();
+  syncEngine.registerFunction('syncFunc', () => 42);
+
+  final syncStart = DateTime.now();
+  for (var i = 0; i < 100; i++) {
+    syncEngine.eval('syncFunc()');
+  }
+  final syncDuration = DateTime.now().difference(syncStart);
+  print('  eval() - 100 calls: ${syncDuration.inMilliseconds}ms');
+  syncEngine.dispose();
+
+  // Async path performance
+  final asyncEngine = RhaiEngine.withDefaults();
+  asyncEngine.registerFunction('syncFunc', () => 42);
+
+  final asyncStart = DateTime.now();
+  for (var i = 0; i < 100; i++) {
+    await asyncEngine.evalAsync('syncFunc()');
+  }
+  final asyncDuration = DateTime.now().difference(asyncStart);
+  print(
+      '  evalAsync() - 100 calls: ${asyncDuration.inMilliseconds}ms (sequential)');
+  asyncEngine.dispose();
+
+  print(
+      '\n  Note: eval() is faster for sync functions due to zero overhead.');
+  print('  evalAsync() overhead is worth it when you need async support.');
+
+  print('\n3.3 Migration Example');
+  print('-' * 30);
+
+  print('Before (sync only):');
+  print('''
+  final engine = RhaiEngine.withDefaults();
+  engine.registerFunction('getData', () => cachedData);
+  final result = engine.eval('getData()');
+''');
+
+  print('\nAfter (with async):');
+  print('''
+  final engine = RhaiEngine.withDefaults();
+  engine.registerFunction('getData', () async => await fetchLiveData());
+  final result = await engine.evalAsync('getData()');
+''');
+
+  print('\n3.4 Real-World Use Case');
+  print('-' * 30);
+
+  final engine = RhaiEngine.withDefaults();
+
+  try {
+    // Simulate a real-world scenario
+    engine.registerFunction('getUserById', (int id) async {
+      // Simulates database query
+      await Future.delayed(Duration(milliseconds: 40));
+      return {'id': id, 'name': 'User$id', 'credits': id * 10};
+    });
+
+    engine.registerFunction('calculateDiscount', (int credits) {
+      // Pure computation - synchronous
+      if (credits > 100) return 0.2;
+      if (credits > 50) return 0.1;
+      return 0.0;
+    });
+
+    engine.registerFunction('applyDiscount', (double price, double discount) {
+      // Pure computation - synchronous
+      return price * (1.0 - discount);
+    });
+
+    final result = await engine.evalAsync('''
+      let user = getUserById(15);              // Async DB query
+      let discount = calculateDiscount(user.credits);  // Sync calc
+      let price = 100.0;
+      let final_price = applyDiscount(price, discount);  // Sync calc
+
+      #{
+        user_name: user.name,
+        credits: user.credits,
+        discount_percent: discount * 100.0,
+        original_price: price,
+        final_price: final_price
+      }
+    ''');
+
+    print('  Business logic result:');
+    print('  $result');
+    print('\n  This demonstrates mixing async (DB) with sync (calculations)');
+  } finally {
+    engine.dispose();
+  }
 }
 
-/// Simulates fetching weather data
-Future<Map<String, dynamic>> fetchWeatherData() async {
-  await Future.delayed(Duration(milliseconds: 40));
-  return {
-    'temp': 72,
-    'condition': 'Sunny',
-  };
-}
+/// Print summary of key takeaways
+void printSummary() {
+  print('KEY TAKEAWAYS:');
+  print('=' * 50);
+  print('''
+1. Dual-Path Architecture:
+   - eval()      : Direct sync callback (zero overhead)
+   - evalAsync() : Background thread + request/response (async capable)
 
-/// Simulates fetching stock data
-Future<Map<String, double>> fetchStockData() async {
-  await Future.delayed(Duration(milliseconds: 35));
-  return {
-    'AAPL': 178.25,
-    'GOOGL': 142.50,
-    'MSFT': 415.30,
-  };
-}
+2. When to Use Each:
+   - eval()      : Sync functions only, maximum performance
+   - evalAsync() : Async functions, HTTP, file I/O, database
 
-/// Simulates fetching configuration
-Future<Map<String, dynamic>> fetchConfiguration() async {
-  await Future.delayed(Duration(milliseconds: 25));
-  return {
-    'api_url': 'https://api.example.com',
-    'timeout': 5000,
-    'debug': false,
-  };
-}
+3. Full Async Support:
+   - Register functions with async/await
+   - Call Future-returning functions from Rhai scripts
+   - Mix sync and async functions in the same script
 
-/// Simulates fetching user list
-Future<List<Map<String, dynamic>>> fetchUserList() async {
-  await Future.delayed(Duration(milliseconds: 45));
-  return [
-    {'id': 1, 'name': 'Alice', 'role': 'admin'},
-    {'id': 2, 'name': 'Bob', 'role': 'editor'},
-    {'id': 3, 'name': 'Charlie', 'role': 'viewer'},
-  ];
-}
+4. Automatic Detection:
+   - eval() detects async functions and provides helpful error
+   - Guides users to use evalAsync() when needed
 
-/// Simulates fetching permissions
-Future<Map<int, List<String>>> fetchPermissions() async {
-  await Future.delayed(Duration(milliseconds: 40));
-  return {
-    1: ['read', 'write', 'edit', 'delete'],
-    2: ['read', 'write', 'edit'],
-    3: ['read'],
-  };
-}
+5. Performance:
+   - eval()      : Fastest (direct FFI, no overhead)
+   - evalAsync() : Slight overhead, worth it for async operations
 
-/// Simulates fetching settings
-Future<Map<String, dynamic>> fetchSettings() async {
-  await Future.delayed(Duration(milliseconds: 30));
-  return {
-    'theme': 'dark',
-    'language': 'en',
-    'notifications': true,
-  };
-}
+6. Examples Shown:
+   - Sync functions with eval()
+   - Async functions with evalAsync()
+   - HTTP requests simulation
+   - Error handling
+   - Concurrent operations
+   - Real-world mixed sync/async scenario
 
-/// Simulates fetching live data
-Future<Map<String, dynamic>> fetchLiveData() async {
-  await Future.delayed(Duration(milliseconds: 20));
-  return {
-    'timestamp': DateTime.now().toIso8601String(),
-    'value': DateTime.now().millisecondsSinceEpoch % 1000,
-  };
+For more details, see:
+- README.md - Quick start and overview
+- docs/ASYNC_FUNCTIONS.md - Complete async guide
+- Architecture documentation in docs/
+''');
 }

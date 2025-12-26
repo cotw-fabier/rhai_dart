@@ -4,10 +4,11 @@
 /// Dart functions registered with the Rhai engine.
 library;
 
-import 'dart:ffi';
-import 'dart:convert';
 import 'dart:async';
+import 'dart:convert';
+import 'dart:ffi';
 import 'package:ffi/ffi.dart';
+import 'package:rhai_dart/src/ffi/bindings.dart';
 import 'package:rhai_dart/src/function_registry.dart';
 import 'package:rhai_dart/src/type_conversion.dart';
 
@@ -31,14 +32,31 @@ typedef NativeCallbackFuncNative = Pointer<Utf8> Function(Int64, Pointer<Utf8>);
 /// before registering any functions with the Rhai engine.
 NativeCallable<NativeCallbackFuncNative>? _globalCallable;
 
+/// Counter for generating unique future IDs.
+///
+/// This is incremented atomically (Dart is single-threaded per isolate)
+/// for each new async operation to ensure unique IDs.
+int _nextFutureId = 1;
+
+/// Generates a unique future ID.
+///
+/// Returns a unique sequential ID for tracking async operations.
+int _generateFutureId() {
+  final id = _nextFutureId;
+  _nextFutureId++;
+  // Wrap around at max int to prevent overflow (unlikely in practice)
+  if (_nextFutureId > 0x7FFFFFFFFFFFFFFF ~/ 2) {
+    _nextFutureId = 1;
+  }
+  return id;
+}
+
 /// Initializes the global callback bridge.
 ///
 /// This must be called before any function registration. It creates a NativeCallable
 /// that Rust can invoke to call back into Dart.
 void initializeCallbackBridge() {
-  if (_globalCallable == null) {
-    _globalCallable = NativeCallable<NativeCallbackFuncNative>.isolateLocal(_dartFunctionInvoker);
-  }
+  _globalCallable ??= NativeCallable<NativeCallbackFuncNative>.isolateLocal(_dartFunctionInvoker);
 }
 
 /// Gets the native function pointer for the callback bridge.
@@ -62,112 +80,26 @@ void disposeCallbackBridge() {
   }
 }
 
-/// Synchronously waits for a Future to complete within an FFI callback context.
-///
-/// This function uses a simple polling mechanism with event loop yields
-/// to wait for a Future to complete synchronously. This is necessary because
-/// FFI callbacks cannot be async, but we need to wait for async Dart functions.
-///
-/// The implementation:
-/// 1. Creates a Completer to track completion status
-/// 2. Attaches callbacks to the Future
-/// 3. Polls the completion status while yielding to the event loop
-/// 4. Returns the result or throws the error
-///
-/// This is a workaround since dart:cli's waitFor is not available in all contexts.
-/// The busy-wait loop is minimized by processing microtasks between checks.
-///
-/// Args:
-///   future: The Future to wait for
-///   timeout: Maximum time to wait (default: 30 seconds)
-///
-/// Returns:
-///   The value produced by the Future
-///
-/// Throws:
-///   TimeoutException if the timeout is exceeded
-///   Any error thrown by the Future
-T _syncWaitForFuture<T>(Future<T> future, {Duration timeout = const Duration(seconds: 30)}) {
-  var result;
-  var hasResult = false;
-  Object? error;
-  StackTrace? stackTrace;
-
-  // Attach callbacks to the Future
-  future.then((value) {
-    result = value;
-    hasResult = true;
-  }).catchError((e, st) {
-    error = e;
-    stackTrace = st;
-    hasResult = true;
-  });
-
-  // Start timeout timer
-  final startTime = DateTime.now();
-  final timeoutTime = startTime.add(timeout);
-
-  // Poll for completion while processing the event loop
-  //
-  // Important note: This approach has significant limitations because
-  // we cannot truly yield the thread from a synchronous callback.
-  // The Future's microtasks may not execute until after we return.
-  //
-  // For now, we rely on the fact that `Future.delayed` schedules work
-  // on the event loop, and the Dart VM may still process some events
-  // during our polling loop. This is not ideal but is the best we can
-  // do without dart:cli's waitFor or similar VM-level support.
-  var iterations = 0;
-  const maxIterations = 30000; // 30 seconds at 1ms per iteration
-
-  while (!hasResult && iterations < maxIterations) {
-    // Check for timeout
-    if (DateTime.now().isAfter(timeoutTime)) {
-      throw TimeoutException('Async function timeout after ${timeout.inSeconds} seconds');
-    }
-
-    // Minimal spin to allow some CPU time for background processing
-    // This is not ideal but necessary in FFI callback context
-    iterations++;
-    for (var i = 0; i < 1000; i++) {
-      // Empty loop to create a small delay
-    }
-  }
-
-  // If we still don't have a result, timeout
-  if (!hasResult) {
-    throw TimeoutException('Async function timeout after ${timeout.inSeconds} seconds');
-  }
-
-  // If there was an error, rethrow it
-  if (error != null) {
-    throw error!;
-  }
-
-  // Return the result
-  return result as T;
-}
-
 /// The core callback function that Rust will invoke.
 ///
 /// This function:
 /// 1. Looks up the callback in the registry by ID
 /// 2. Parses JSON args to Dart List<dynamic>
 /// 3. Invokes the Dart function with args
-/// 4. Handles sync vs async distinction
-/// 5. Converts result to JSON and returns as C string
-/// 6. Catches exceptions and converts to error JSON
+/// 4. Detects if the result is a Future (async function)
+/// 5. For async functions: returns "pending" status immediately and sets up completion callback
+/// 6. For sync functions: returns "success" status with value
+/// 7. Catches exceptions and converts to error JSON
 ///
-/// For async functions (returning Future<T>), this attempts to wait
-/// synchronously for the Future to complete. Note that this has limitations
-/// in FFI callback contexts - see _syncWaitForFuture documentation for details.
+/// For async functions (returning `Future<T>`), this function:
+/// - Generates a unique future ID
+/// - Returns `{"status": "pending", "future_id": <id>}` immediately
+/// - Attaches .then()/.catchError() callbacks to the Future
+/// - Calls rhai_complete_future() via FFI when the Future completes
 ///
-/// IMPORTANT: Async function support in FFI callbacks has known limitations.
-/// The busy-wait mechanism may not work reliably for all async operations.
-/// For best results:
-/// - Keep async operations short (< 1 second)
-/// - Use Future.delayed or Timer-based delays
-/// - Avoid complex async chains
+/// This allows Dart's event loop to run naturally while Rust awaits the result
+/// through a oneshot channel, enabling true async support for HTTP requests,
+/// file I/O, and other async operations.
 ///
 /// Args:
 ///   callbackId: The unique ID of the registered function
@@ -194,47 +126,120 @@ Pointer<Utf8> _dartFunctionInvoker(int callbackId, Pointer<Utf8> argsJson) {
 
     // Handle async functions (Future return values)
     if (result is Future) {
-      // Attempt to wait synchronously for the Future
-      // Note: This has limitations in FFI callback contexts
-      try {
-        final syncResult = _syncWaitForFuture(result, timeout: Duration(seconds: 30));
-        return _encodeResult(syncResult);
-      } on TimeoutException catch (e) {
-        return _encodeError('Async function timeout: $e');
-      } catch (e, stackTrace) {
-        return _encodeError('Error in async function: $e\nStack trace: $stackTrace');
-      }
+      // Generate unique future ID
+      final futureId = _generateFutureId();
+
+      // Set up completion callbacks
+      _completeFutureFromDart(futureId, result);
+
+      // Return pending status immediately
+      return _encodePendingStatus(futureId);
     } else {
       // Sync function - return result directly
-      return _encodeResult(result);
+      return _encodeSuccessStatus(result);
     }
   } catch (e, stackTrace) {
     return _encodeError('Error invoking Dart function: $e\nStack trace: $stackTrace');
   }
 }
 
-/// Encodes a successful result as JSON.
+/// Completes a future from Dart by calling back to Rust via FFI.
+///
+/// This function attaches .then() and .catchError() callbacks to the Future
+/// that will call rhai_complete_future() when the async operation completes.
+///
+/// Args:
+///   futureId: The unique ID of the future
+///   future: The Future to monitor
+void _completeFutureFromDart(int futureId, Future<dynamic> future) {
+  future.then((value) {
+    // Encode the successful result as JSON
+    final resultJson = json.encode({
+      'status': 'success',
+      'value': value,
+    });
+
+    // Convert to C string
+    final resultPtr = resultJson.toNativeUtf8();
+
+    try {
+      // Call Rust FFI to complete the future
+      final bindings = RhaiBindings.instance;
+      final returnCode = bindings.completeFuture(futureId, resultPtr);
+
+      // Check return code (0 = success, -1 = error)
+      if (returnCode != 0) {
+        // Log warning but don't crash - the Rust side will handle cleanup
+        // ignore: avoid_print
+        print('Warning: rhai_complete_future returned error code $returnCode for future $futureId');
+      }
+    } finally {
+      // Free the allocated C string
+      malloc.free(resultPtr);
+    }
+  }).catchError((Object error, StackTrace stackTrace) {
+    // Encode the error as JSON
+    final errorJson = json.encode({
+      'status': 'error',
+      'error': 'Error in async function: $error\nStack trace: $stackTrace',
+    });
+
+    // Convert to C string
+    final errorPtr = errorJson.toNativeUtf8();
+
+    try {
+      // Call Rust FFI to complete the future with error
+      final bindings = RhaiBindings.instance;
+      final returnCode = bindings.completeFuture(futureId, errorPtr);
+
+      // Check return code (0 = success, -1 = error)
+      if (returnCode != 0) {
+        // Log warning but don't crash - the Rust side will handle cleanup
+        // ignore: avoid_print
+        print('Warning: rhai_complete_future returned error code $returnCode for future $futureId');
+      }
+    } finally {
+      // Free the allocated C string
+      malloc.free(errorPtr);
+    }
+  });
+}
+
+/// Encodes a successful result as JSON with "success" status.
 ///
 /// Uses our enhanced type conversion to handle special float values.
 ///
 /// Returns a C string pointer that must be freed by the caller.
-Pointer<Utf8> _encodeResult(dynamic result) {
+Pointer<Utf8> _encodeSuccessStatus(dynamic result) {
   try {
     // Use our enhanced type conversion for the value
     final valueJson = rhaiValueToJson(result);
 
     // Wrap in success envelope - use plain jsonEncode for the envelope structure
-    final resultJson = json.encode({'success': true, 'value_json': valueJson});
+    final resultJson = json.encode({'status': 'success', 'value_json': valueJson});
     return resultJson.toNativeUtf8();
   } catch (e) {
     return _encodeError('Failed to encode result: $e');
   }
 }
 
-/// Encodes an error as JSON.
+/// Encodes a pending status for async operations.
+///
+/// Returns JSON: `{"status": "pending", "future_id": <id>}`
+///
+/// Returns a C string pointer that must be freed by the caller.
+Pointer<Utf8> _encodePendingStatus(int futureId) {
+  final resultJson = json.encode({
+    'status': 'pending',
+    'future_id': futureId,
+  });
+  return resultJson.toNativeUtf8();
+}
+
+/// Encodes an error as JSON with "error" status.
 ///
 /// Returns a C string pointer that must be freed by the caller.
 Pointer<Utf8> _encodeError(String errorMessage) {
-  final errorJson = json.encode({'success': false, 'error': errorMessage});
+  final errorJson = json.encode({'status': 'error', 'error': errorMessage});
   return errorJson.toNativeUtf8();
 }

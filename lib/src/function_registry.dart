@@ -14,8 +14,11 @@ import 'dart:collection';
 ///
 /// The registry uses a simple incrementing counter for IDs and a HashMap for storage.
 class FunctionRegistry {
-  /// Storage for registered callbacks
+  /// Storage for registered callbacks by ID
   final Map<int, Function> _callbacks = HashMap<int, Function>();
+
+  /// Storage for registered callbacks by name
+  final Map<String, Function> _callbacksByName = HashMap<String, Function>();
 
   /// Next available callback ID
   int _nextId = 1;
@@ -50,6 +53,7 @@ class FunctionRegistry {
   int register(String name, Function callback) {
     final id = _nextId++;
     _callbacks[id] = callback;
+    _callbacksByName[name] = callback;
     return id;
   }
 
@@ -96,6 +100,33 @@ class FunctionRegistry {
     return _callbacks[id];
   }
 
+  /// Retrieves a callback by name.
+  ///
+  /// Returns null if the name doesn't exist in the registry.
+  ///
+  /// This is used by evalAsync to look up functions by name when
+  /// handling function call requests from Rust.
+  ///
+  /// Example:
+  /// ```dart
+  /// final registry = FunctionRegistry();
+  /// registry.register('myFunc', () => 42);
+  /// final callback = registry.getByName('myFunc');
+  /// if (callback != null) {
+  ///   final result = Function.apply(callback, []);
+  ///   print(result); // 42
+  /// }
+  /// ```
+  ///
+  /// Args:
+  ///   name: The function name to retrieve
+  ///
+  /// Returns:
+  ///   The registered function, or null if not found
+  Function? getByName(String name) {
+    return _callbacksByName[name];
+  }
+
   /// Returns the number of registered callbacks.
   ///
   /// Useful for debugging and testing.
@@ -106,5 +137,6 @@ class FunctionRegistry {
   /// This should only be used in testing or when shutting down.
   void clear() {
     _callbacks.clear();
+    _callbacksByName.clear();
   }
 }

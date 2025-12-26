@@ -663,36 +663,31 @@ class RhaiEngine implements Finalizable {
   /// Registers a Dart function with the Rhai engine.
   ///
   /// This allows Rhai scripts to call Dart functions. Both synchronous and
-  /// asynchronous functions are supported.
-  ///
-  /// **Important:** Use [eval] for sync functions, [evalAsync] for async functions.
+  /// asynchronous functions are supported. Async functions will block the
+  /// Rhai execution until they complete.
   ///
   /// The function can have up to 10 parameters of any type that can be
   /// converted between Dart and Rhai (primitives, lists, maps).
   ///
-  /// Example with synchronous function:
+  /// Example:
   /// ```dart
   /// final engine = RhaiEngine.withDefaults();
   ///
-  /// // Register a sync function
+  /// // Register a simple function
   /// engine.registerFunction('add', (int a, int b) => a + b);
   ///
-  /// // Use it with eval() - fastest path
+  /// // Use it in a script
   /// final result = engine.eval('add(10, 20)');
   /// print(result); // 30
-  /// ```
   ///
-  /// Example with asynchronous function:
-  /// ```dart
   /// // Register an async function
   /// engine.registerFunction('fetchData', () async {
   ///   await Future.delayed(Duration(milliseconds: 100));
-  ///   return {'status': 'success', 'data': [1, 2, 3]};
+  ///   return 'data';
   /// });
   ///
-  /// // MUST use evalAsync() for async functions
-  /// final result = await engine.evalAsync('fetchData()');
-  /// print(result); // {status: success, data: [1, 2, 3]}
+  /// final result2 = engine.eval('fetchData()');
+  /// print(result2); // 'data'
   /// ```
   ///
   /// Args:
