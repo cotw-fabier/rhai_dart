@@ -1,0 +1,34 @@
+# Test configuration for rhai_dart package
+
+# Use native assets experimental flag for all tests
+test:
+  platforms:
+    - vm
+
+  # Enable native assets
+  require_experiment:
+    - native-assets
+
+# Test file patterns
+file_reporters:
+  json: build/test-results.json
+
+# Test timeout
+timeout: 30s
+
+# Tags for organizing tests
+tags:
+  ffi:
+    description: Tests for FFI infrastructure
+  engine:
+    description: Tests for Rhai engine lifecycle
+  script:
+    description: Tests for script execution
+  functions:
+    description: Tests for function registration
+  types:
+    description: Tests for type conversion
+  sandbox:
+    description: Tests for sandboxing features
+  memory:
+    description: Tests for memory management

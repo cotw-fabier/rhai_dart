@@ -1,0 +1,33 @@
+task_groups:
+  - name: Group 1 - Project Foundation & Build System
+    claude_code_subagent: implementer
+  - name: Group 2.1 - Core FFI Infrastructure
+    claude_code_subagent: implementer
+  - name: Group 2.2 - FFI Bindings Generation
+    claude_code_subagent: implementer
+  - name: Group 3.1 - Engine Lifecycle & Configuration
+    claude_code_subagent: implementer
+  - name: Group 3.2 - Script Execution (eval_rhai)
+    claude_code_subagent: implementer
+  - name: Group 3.3 - Script Analysis (analyze_rhai - Nice to Have)
+    claude_code_subagent: implementer
+  - name: Group 4.1 - Function Registration Infrastructure
+    claude_code_subagent: implementer
+  - name: Group 4.2 - Async Function Handling
+    claude_code_subagent: implementer
+  - name: Group 5.1 - Comprehensive Type Conversion
+    claude_code_subagent: implementer
+  - name: Group 5.2 - Sandboxing & Security
+    claude_code_subagent: implementer
+  - name: Group 6.1 - Integration Testing & Gap Analysis
+    claude_code_subagent: implementer
+  - name: Group 6.2 - Memory Management Validation
+    claude_code_subagent: implementer
+  - name: Group 6.3 - Cross-Platform Build Validation
+    claude_code_subagent: implementer
+  - name: Group 7.1 - API Documentation
+    claude_code_subagent: implementer
+  - name: Group 7.2 - Usage Examples
+    claude_code_subagent: implementer
+  - name: Group 7.3 - Guides & Architecture Documentation
+    claude_code_subagent: implementer

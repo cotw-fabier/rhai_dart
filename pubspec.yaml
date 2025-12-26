@@ -1,14 +1,20 @@
 name: rhai_dart
-description: A starting point for Dart libraries or applications.
-version: 1.0.0
-# repository: https://github.com/my_org/my_repo
+description: A cross-platform FFI library that enables Dart applications to execute Rhai scripts with bidirectional function calling, comprehensive type conversion, and robust error handling.
+version: 0.1.0
+repository: https://github.com/fabier/rhai_dart
 
 environment:
-  sdk: ^3.10.1
+  sdk: ^3.10.0
 
-# Add regular dependencies here.
+# Enable native assets support
+# Use with: dart run --enable-experiment=native-assets
+native_assets:
+  enabled: true
+
 dependencies:
-  # path: ^1.9.0
+  ffi: ^2.1.0
+  hooks: ^1.0.0
+  native_toolchain_rust: ^1.0.0
 
 dev_dependencies:
   lints: ^6.0.0
