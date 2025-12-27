@@ -826,6 +826,386 @@ let html = render(`
 `, page);
 ```
 
+## Passing Variables from Dart
+
+The `setVar` and `setConstant` methods allow you to pass data from Dart directly into Rhai scripts. This is particularly powerful when combined with template rendering, as you can prepare complex data structures in Dart and use them in Tera templates.
+
+### Basic Usage
+
+#### setVar - Mutable Variables
+
+Variables set with `setVar` are available in Rhai scripts and can be modified by the script:
+
+```dart
+final engine = RhaiEngine.withDefaults();
+
+// Set simple values
+engine.setVar('userName', 'Alice');
+engine.setVar('itemCount', 42);
+engine.setVar('isActive', true);
+
+// Set complex values
+engine.setVar('config', {
+  'theme': 'dark',
+  'language': 'en',
+  'notifications': true,
+});
+
+engine.setVar('items', ['Apple', 'Banana', 'Cherry']);
+
+// Use in script
+final result = engine.eval('userName + " has " + itemCount + " items"');
+print(result); // "Alice has 42 items"
+
+// Variables can be modified by script
+engine.eval('itemCount = 100');
+
+engine.dispose();
+```
+
+#### setConstant - Immutable Constants
+
+Constants set with `setConstant` cannot be modified by the script. Attempting to modify them will throw a runtime error:
+
+```dart
+final engine = RhaiEngine.withDefaults();
+
+// Set constants
+engine.setConstant('PI', 3.14159);
+engine.setConstant('APP_VERSION', '2.0.0');
+engine.setConstant('MAX_RETRIES', 3);
+
+// Use constants in script
+final circumference = engine.eval('2.0 * PI * 10.0');
+print(circumference); // 62.8318
+
+// Attempting to modify throws error
+try {
+  engine.eval('PI = 3'); // Throws RhaiRuntimeError!
+} on RhaiRuntimeError catch (e) {
+  print('Cannot modify constant: ${e.message}');
+}
+
+engine.dispose();
+```
+
+#### clearScope - Reset Variables
+
+Use `clearScope` to remove all variables and constants from the engine:
+
+```dart
+final engine = RhaiEngine.withDefaults();
+
+engine.setVar('x', 10);
+engine.setConstant('y', 20);
+
+// Variables exist
+print(engine.eval('x + y')); // 30
+
+// Clear all variables
+engine.clearScope();
+
+// Variables no longer exist
+try {
+  engine.eval('x'); // Throws - x not defined
+} on RhaiRuntimeError {
+  print('Variable x no longer exists');
+}
+
+engine.dispose();
+```
+
+### Template Rendering with Dart Data
+
+The real power comes from combining `setVar`/`setConstant` with the `render` function. You can prepare your data in Dart and render templates in Rhai:
+
+#### Basic Template with Dart Data
+
+```dart
+final engine = RhaiEngine.withDefaults();
+
+// Prepare data in Dart
+engine.setVar('user', {
+  'name': 'Alice',
+  'email': 'alice@example.com',
+  'role': 'Admin',
+});
+
+// Render template in Rhai
+final html = engine.eval('''
+  render(`
+    <div class="user-card">
+      <h2>{{ data.name }}</h2>
+      <p>Email: {{ data.email }}</p>
+      <span class="badge">{{ data.role }}</span>
+    </div>
+  `, user)
+''');
+
+print(html);
+engine.dispose();
+```
+
+#### Dynamic Email Templates
+
+```dart
+Future<String> generateOrderEmail(Order order, Customer customer) async {
+  final engine = RhaiEngine.withDefaults();
+
+  try {
+    // Pass order data from Dart
+    engine.setVar('order', {
+      'id': order.id,
+      'date': order.date.toIso8601String(),
+      'items': order.items.map((item) => {
+        'name': item.name,
+        'quantity': item.quantity,
+        'price': item.price,
+      }).toList(),
+      'total': order.total,
+    });
+
+    engine.setVar('customer', {
+      'name': customer.name,
+      'email': customer.email,
+    });
+
+    // Set company constants
+    engine.setConstant('COMPANY_NAME', 'Acme Corp');
+    engine.setConstant('SUPPORT_EMAIL', 'support@acme.com');
+
+    return engine.eval('''
+      render(`
+Dear {{ data.customer.name }},
+
+Thank you for your order #{{ data.order.id }}!
+
+Order Summary:
+{% for item in data.order.items %}
+- {{ item.name }} x{{ item.quantity }}: \${{ item.price }}
+{% endfor %}
+
+Total: \${{ data.order.total }}
+
+If you have questions, contact us at {{ data.support_email }}.
+
+Best regards,
+{{ data.company_name }}
+      `, #{
+        customer: customer,
+        order: order,
+        company_name: COMPANY_NAME,
+        support_email: SUPPORT_EMAIL
+      })
+    ''') as String;
+  } finally {
+    engine.dispose();
+  }
+}
+```
+
+#### Configuration File Generation
+
+```dart
+String generateNginxConfig(ServerConfig config) {
+  final engine = RhaiEngine.withDefaults();
+
+  try {
+    engine.setConstant('config', {
+      'server_name': config.serverName,
+      'port': config.port,
+      'ssl_enabled': config.sslEnabled,
+      'locations': config.locations.map((loc) => {
+        'path': loc.path,
+        'proxy_pass': loc.proxyPass,
+        'cache_enabled': loc.cacheEnabled,
+      }).toList(),
+    });
+
+    return engine.eval('''
+      render(`
+server {
+    listen {{ data.port }}{% if data.ssl_enabled %} ssl{% endif %};
+    server_name {{ data.server_name }};
+
+{% for location in data.locations %}
+    location {{ location.path }} {
+        proxy_pass {{ location.proxy_pass }};
+{% if location.cache_enabled %}
+        proxy_cache on;
+{% endif %}
+    }
+{% endfor %}
+}
+      `, config)
+    ''') as String;
+  } finally {
+    engine.dispose();
+  }
+}
+```
+
+#### Report Generation with Async Data
+
+```dart
+Future<String> generateSalesReport(DateTime startDate, DateTime endDate) async {
+  final engine = RhaiEngine.withDefaults();
+
+  try {
+    // Register async function to fetch data
+    engine.registerFunction('fetchSalesData', () async {
+      final sales = await database.getSales(startDate, endDate);
+      return sales.map((s) => {
+        'date': s.date.toIso8601String(),
+        'product': s.productName,
+        'quantity': s.quantity,
+        'revenue': s.revenue,
+      }).toList();
+    });
+
+    // Set report metadata
+    engine.setConstant('reportTitle', 'Sales Report');
+    engine.setVar('dateRange', {
+      'start': startDate.toIso8601String(),
+      'end': endDate.toIso8601String(),
+    });
+
+    return await engine.evalAsync('''
+      let sales = fetchSalesData();
+      let total_revenue = 0.0;
+      for sale in sales {
+        total_revenue += sale.revenue;
+      }
+
+      render(`
+# {{ data.title }}
+
+Period: {{ data.start }} to {{ data.end }}
+
+## Sales Data
+
+| Date | Product | Qty | Revenue |
+|------|---------|-----|---------|
+{% for sale in data.sales %}
+| {{ sale.date }} | {{ sale.product }} | {{ sale.quantity }} | \${{ sale.revenue }} |
+{% endfor %}
+
+**Total Revenue: \${{ data.total }}**
+      `, #{
+        title: reportTitle,
+        start: dateRange.start,
+        end: dateRange.end,
+        sales: sales,
+        total: total_revenue
+      })
+    ''') as String;
+  } finally {
+    engine.dispose();
+  }
+}
+```
+
+### Supported Types
+
+Both `setVar` and `setConstant` support the same types as registered functions:
+
+| Dart Type | Rhai Type | Example |
+|-----------|-----------|---------|
+| `null` | `()` | `null` |
+| `bool` | `bool` | `true`, `false` |
+| `int` | `i64` | `42` |
+| `double` | `f64` | `3.14` |
+| `String` | `String` | `"hello"` |
+| `List<dynamic>` | `Array` | `[1, 2, 3]` |
+| `Map<String, dynamic>` | `Map` | `{'key': 'value'}` |
+
+Special float values are also supported:
+- `double.infinity` -> Rhai infinity
+- `double.negativeInfinity` -> Rhai negative infinity
+- `double.nan` -> Rhai NaN
+
+### Best Practices
+
+#### 1. Use Constants for Configuration
+
+```dart
+// GOOD: Use setConstant for values that shouldn't change
+engine.setConstant('API_URL', 'https://api.example.com');
+engine.setConstant('MAX_ITEMS', 100);
+engine.setConstant('VERSION', '1.0.0');
+```
+
+#### 2. Use Variables for Dynamic Data
+
+```dart
+// GOOD: Use setVar for data that may change or be modified
+engine.setVar('currentUser', userData);
+engine.setVar('cartItems', shoppingCart);
+engine.setVar('formData', userInput);
+```
+
+#### 3. Clear Scope Between Executions
+
+```dart
+// GOOD: Reset state for each new script execution
+void executeUserScript(String script, Map<String, dynamic> context) {
+  engine.clearScope(); // Start fresh
+
+  context.forEach((key, value) {
+    engine.setVar(key, value);
+  });
+
+  return engine.eval(script);
+}
+```
+
+#### 4. Combine with Registered Functions
+
+```dart
+// GOOD: Use variables for data, functions for operations
+engine.setVar('items', productList);
+engine.setConstant('TAX_RATE', 0.08);
+
+engine.registerFunction('formatCurrency', (double amount) {
+  return '\$${amount.toStringAsFixed(2)}';
+});
+
+final invoice = engine.eval('''
+  let subtotal = 0.0;
+  for item in items {
+    subtotal += item.price * item.quantity;
+  }
+  let tax = subtotal * TAX_RATE;
+  let total = subtotal + tax;
+
+  render(`
+    Subtotal: {{ data.subtotal }}
+    Tax: {{ data.tax }}
+    Total: {{ data.total }}
+  `, #{
+    subtotal: formatCurrency(subtotal),
+    tax: formatCurrency(tax),
+    total: formatCurrency(total)
+  })
+''');
+```
+
+#### 5. Async Scripts with Variables
+
+```dart
+// Variables work with both eval() and evalAsync()
+engine.setVar('userId', 123);
+engine.registerFunction('fetchUserData', (int id) async {
+  return await database.getUser(id);
+});
+
+// Variables are available in async scripts
+final result = await engine.evalAsync('''
+  let userData = fetchUserData(userId);
+  render("Hello, {{ data.name }}!", userData)
+''');
+```
+
 ## Complete Examples
 
 ### Example 1: Simple Calculator with Validation
