@@ -14,6 +14,8 @@ This guide provides comprehensive best practices for using the rhai_dart package
 - [Error Handling](#error-handling)
 - [Performance Optimization](#performance-optimization)
 - [Common Pitfalls and Solutions](#common-pitfalls-and-solutions)
+- [Template Rendering with Tera](#template-rendering-with-tera)
+- [Passing Variables from Dart](#passing-variables-from-dart)
 - [Complete Examples](#complete-examples)
 
 ## Quick Overview
@@ -641,6 +643,187 @@ final engine = RhaiEngine.withConfig(
 final engine = RhaiEngine.withConfig(
   RhaiConfig.custom(timeoutMs: 1000) // 1 second timeout
 );
+```
+
+## Template Rendering with Tera
+
+The Rhai engine includes a built-in `render` function powered by [Tera](https://keats.github.io/tera/), a powerful template engine inspired by Jinja2/Django templates.
+
+### Basic Usage
+
+The `render` function takes two arguments:
+1. A template string (using Tera/Jinja2 syntax)
+2. A data object accessible as `data` in the template
+
+```rhai
+let user = #{
+    name: "Alice",
+    email: "alice@example.com"
+};
+
+let result = render("Hello, {{ data.name }}!", user);
+// result: "Hello, Alice!"
+```
+
+### Template Syntax
+
+Tera uses `{{ }}` for expressions and `{% %}` for control structures:
+
+```rhai
+let context = #{
+    title: "My Page",
+    items: ["Apple", "Banana", "Cherry"],
+    show_footer: true
+};
+
+let html = render(`
+<h1>{{ data.title }}</h1>
+<ul>
+{% for item in data.items %}
+    <li>{{ item }}</li>
+{% endfor %}
+</ul>
+{% if data.show_footer %}
+<footer>Copyright 2024</footer>
+{% endif %}
+`, context);
+```
+
+### Common Tera Features
+
+#### Variables and Filters
+
+```rhai
+let data = #{ name: "world", count: 42 };
+
+// Basic variable
+render("Hello {{ data.name }}", data);  // "Hello world"
+
+// Filters
+render("{{ data.name | upper }}", data);      // "WORLD"
+render("{{ data.name | capitalize }}", data); // "World"
+render("{{ data.count | plus(8) }}", data);   // "50"
+```
+
+#### Conditionals
+
+```rhai
+let user = #{ is_admin: true, name: "Bob" };
+
+render(`
+{% if data.is_admin %}
+  Welcome, Admin {{ data.name }}!
+{% else %}
+  Welcome, {{ data.name }}!
+{% endif %}
+`, user);
+```
+
+#### Loops
+
+```rhai
+let data = #{ users: [
+    #{ name: "Alice", active: true },
+    #{ name: "Bob", active: false }
+]};
+
+render(`
+{% for user in data.users %}
+  {{ user.name }}: {{ user.active }}
+{% endfor %}
+`, data);
+```
+
+### Error Handling
+
+The `render` function throws Rhai errors for invalid templates or render failures:
+
+```dart
+try {
+  final result = engine.eval('''
+    render("{{ invalid syntax", #{})
+  ''');
+} on RhaiRuntimeError catch (e) {
+  // e.message: "Template error: ..."
+}
+
+try {
+  final result = engine.eval('''
+    render("{{ data.missing.field }}", #{})
+  ''');
+} on RhaiRuntimeError catch (e) {
+  // e.message: "Render error: ..."
+}
+```
+
+### Use Cases
+
+#### Dynamic Email Templates
+
+```rhai
+let email_data = #{
+    recipient: "John",
+    order_id: "12345",
+    items: ["Widget", "Gadget"],
+    total: 99.99
+};
+
+let email_body = render(`
+Dear {{ data.recipient }},
+
+Thank you for your order #{{ data.order_id }}.
+
+Items ordered:
+{% for item in data.items %}
+- {{ item }}
+{% endfor %}
+
+Total: ${{ data.total }}
+
+Best regards,
+The Team
+`, email_data);
+```
+
+#### Dynamic Configuration
+
+```rhai
+let config = #{
+    app_name: "MyApp",
+    debug: true,
+    features: ["auth", "logging"]
+};
+
+let config_file = render(`
+app_name = "{{ data.app_name }}"
+debug = {{ data.debug }}
+features = [{% for f in data.features %}"{{ f }}"{% if not loop.last %}, {% endif %}{% endfor %}]
+`, config);
+```
+
+#### HTML Generation
+
+```rhai
+let page = #{
+    title: "Dashboard",
+    nav_items: ["Home", "Settings", "Logout"],
+    content: "Welcome to your dashboard!"
+};
+
+let html = render(`
+<!DOCTYPE html>
+<html>
+<head><title>{{ data.title }}</title></head>
+<body>
+  <nav>
+    {% for item in data.nav_items %}
+    <a href="/{{ item | lower }}">{{ item }}</a>
+    {% endfor %}
+  </nav>
+  <main>{{ data.content }}</main>
+</body>
+</html>
+`, page);
 ```
 
 ## Complete Examples

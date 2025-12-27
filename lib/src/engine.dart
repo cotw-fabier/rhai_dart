@@ -747,6 +747,172 @@ class RhaiEngine implements Finalizable {
     }
   }
 
+  /// Sets a mutable variable that will be available in Rhai scripts.
+  ///
+  /// This allows you to pass data from Dart into Rhai scripts. The variable
+  /// can be modified by the script (unlike [setConstant]).
+  ///
+  /// Supported types:
+  /// - `null`
+  /// - `bool`
+  /// - `int`
+  /// - `double` (including special values: infinity, -infinity, NaN)
+  /// - `String`
+  /// - `List<dynamic>` (recursively converted)
+  /// - `Map<String, dynamic>` (recursively converted)
+  ///
+  /// Example:
+  /// ```dart
+  /// final engine = RhaiEngine.withDefaults();
+  ///
+  /// // Set simple values
+  /// engine.setVar('name', 'Alice');
+  /// engine.setVar('age', 30);
+  /// engine.setVar('active', true);
+  ///
+  /// // Set complex values
+  /// engine.setVar('config', {'debug': true, 'level': 5});
+  /// engine.setVar('items', [1, 2, 3]);
+  ///
+  /// // Use in script
+  /// final result = engine.eval('name + " is " + age + " years old"');
+  /// print(result); // "Alice is 30 years old"
+  ///
+  /// // Variable can be modified in script
+  /// engine.eval('age = 31');
+  /// ```
+  ///
+  /// Throws [RhaiFFIError] if the operation fails.
+  /// Throws [StateError] if the engine has been disposed.
+  void setVar(String name, dynamic value) {
+    // Check if disposed
+    final enginePtr = _nativeEngine; // Will throw if disposed
+
+    // Convert value to JSON
+    final valueJson = rhaiValueToJson(value);
+
+    // Convert strings to native
+    final namePtr = name.toNativeUtf8();
+    final valueJsonPtr = valueJson.toNativeUtf8();
+
+    try {
+      // Call FFI function
+      final returnCode = _bindings.setVar(
+        enginePtr,
+        namePtr.cast(),
+        valueJsonPtr.cast(),
+      );
+
+      // Check for errors
+      if (returnCode != 0) {
+        checkFFIError(_bindings);
+        throw RhaiFFIError('Failed to set variable: $name');
+      }
+    } finally {
+      // Free native strings
+      calloc.free(namePtr);
+      calloc.free(valueJsonPtr);
+    }
+  }
+
+  /// Sets an immutable constant that will be available in Rhai scripts.
+  ///
+  /// This allows you to pass data from Dart into Rhai scripts. Unlike [setVar],
+  /// attempting to modify this value in a script will result in a runtime error.
+  ///
+  /// This is useful for configuration values, constants, or data that should
+  /// not be changed by the script.
+  ///
+  /// Supported types are the same as [setVar].
+  ///
+  /// Example:
+  /// ```dart
+  /// final engine = RhaiEngine.withDefaults();
+  ///
+  /// // Set constants
+  /// engine.setConstant('PI', 3.14159);
+  /// engine.setConstant('APP_NAME', 'MyApp');
+  /// engine.setConstant('CONFIG', {'maxRetries': 3, 'timeout': 5000});
+  ///
+  /// // Use in script
+  /// final result = engine.eval('PI * 2');
+  /// print(result); // 6.28318
+  ///
+  /// // Attempting to modify will throw
+  /// try {
+  ///   engine.eval('PI = 3'); // Throws RhaiRuntimeError
+  /// } on RhaiRuntimeError catch (e) {
+  ///   print('Cannot modify constant: ${e.message}');
+  /// }
+  /// ```
+  ///
+  /// Throws [RhaiFFIError] if the operation fails.
+  /// Throws [StateError] if the engine has been disposed.
+  void setConstant(String name, dynamic value) {
+    // Check if disposed
+    final enginePtr = _nativeEngine; // Will throw if disposed
+
+    // Convert value to JSON
+    final valueJson = rhaiValueToJson(value);
+
+    // Convert strings to native
+    final namePtr = name.toNativeUtf8();
+    final valueJsonPtr = valueJson.toNativeUtf8();
+
+    try {
+      // Call FFI function
+      final returnCode = _bindings.setConstant(
+        enginePtr,
+        namePtr.cast(),
+        valueJsonPtr.cast(),
+      );
+
+      // Check for errors
+      if (returnCode != 0) {
+        checkFFIError(_bindings);
+        throw RhaiFFIError('Failed to set constant: $name');
+      }
+    } finally {
+      // Free native strings
+      calloc.free(namePtr);
+      calloc.free(valueJsonPtr);
+    }
+  }
+
+  /// Clears all variables and constants from the engine scope.
+  ///
+  /// This removes all variables previously set via [setVar] and [setConstant].
+  /// Registered functions are not affected.
+  ///
+  /// Example:
+  /// ```dart
+  /// final engine = RhaiEngine.withDefaults();
+  /// engine.setVar('x', 10);
+  /// engine.setConstant('PI', 3.14);
+  ///
+  /// engine.clearScope();
+  ///
+  /// // Variables are no longer available
+  /// try {
+  ///   engine.eval('x + 1'); // Throws - x not defined
+  /// } on RhaiRuntimeError catch (e) {
+  ///   print('Variable not found: ${e.message}');
+  /// }
+  /// ```
+  ///
+  /// Throws [RhaiFFIError] if the operation fails.
+  /// Throws [StateError] if the engine has been disposed.
+  void clearScope() {
+    final enginePtr = _nativeEngine;
+
+    final returnCode = _bindings.clearScope(enginePtr);
+
+    if (returnCode != 0) {
+      checkFFIError(_bindings);
+      throw const RhaiFFIError('Failed to clear scope');
+    }
+  }
+
   @override
   String toString() {
     if (_disposed) {

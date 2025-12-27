@@ -9,6 +9,7 @@ use crate::values::rhai_dynamic_to_json;
 use crate::{catch_panic, catch_panic_ptr};
 use rhai::{Engine, Dynamic};
 use std::ffi::{CString, CStr, c_char};
+use tera::{Tera, Context};
 
 /// Configuration builder for Rhai engine.
 ///
@@ -128,6 +129,20 @@ impl EngineConfig {
         // 2. Not using Engine::compile_file or import statements
         // 3. Not calling Engine::register_module for module loading
         // For a fully sandboxed environment, we rely on not exposing these features.
+
+        // Register the Tera template rendering function
+        engine.register_fn("render", |template: &str, data: Dynamic| -> Result<String, Box<rhai::EvalAltResult>> {
+            let mut tera = Tera::default();
+
+            tera.add_raw_template("tpl", template)
+                .map_err(|e| format!("Template error: {}", e))?;
+
+            let mut context = Context::new();
+            context.insert("data", &data);
+
+            tera.render("tpl", &context)
+                .map_err(|e| format!("Render error: {}", e).into())
+        });
     }
 }
 
@@ -274,8 +289,10 @@ pub extern "C" fn rhai_eval(
             }
         };
 
-        // Evaluate the script directly - the Tokio runtime will be used by async callbacks
-        let result: Result<Dynamic, Box<rhai::EvalAltResult>> = rhai_engine.eval(script_str);
+        // Get the scope and evaluate the script with it
+        // This allows variables set via rhai_set_var/rhai_set_constant to be available
+        let mut scope = engine_wrapper.scope();
+        let result: Result<Dynamic, Box<rhai::EvalAltResult>> = rhai_engine.eval_with_scope(&mut scope, script_str);
 
         // Check if async functions were invoked during eval
         // Sync eval() should not be used with async functions - users should use evalAsync()
@@ -523,6 +540,217 @@ pub extern "C" fn rhai_analyze(
                 -1
             }
         }
+    }}
+}
+
+/// Sets a mutable variable in the engine's scope.
+///
+/// This variable will be available to scripts executed with this engine.
+/// Variables set this way can be modified by the script.
+///
+/// # Safety
+///
+/// This function is safe to call from FFI. The engine, name, and value_json pointers must be valid.
+///
+/// # Returns
+///
+/// 0 on success, -1 on error.
+/// On error, use `rhai_get_last_error()` to retrieve the error message.
+///
+/// # Arguments
+///
+/// * `engine` - Pointer to the Rhai engine
+/// * `name` - Pointer to a null-terminated C string containing the variable name
+/// * `value_json` - Pointer to a null-terminated C string containing the JSON-encoded value
+#[no_mangle]
+pub extern "C" fn rhai_set_var(
+    engine: *mut CRhaiEngine,
+    name: *const c_char,
+    value_json: *const c_char,
+) -> i32 {
+    catch_panic! {{
+        clear_last_error();
+
+        // Validate pointers
+        if engine.is_null() {
+            set_last_error("Engine pointer is null");
+            return -1;
+        }
+
+        if name.is_null() {
+            set_last_error("Variable name pointer is null");
+            return -1;
+        }
+
+        if value_json.is_null() {
+            set_last_error("Value JSON pointer is null");
+            return -1;
+        }
+
+        // Get the engine wrapper
+        let engine_wrapper = unsafe { &*engine };
+
+        // Convert variable name to Rust string
+        let var_name = unsafe {
+            match CStr::from_ptr(name).to_str() {
+                Ok(s) => s.to_string(),
+                Err(e) => {
+                    set_last_error(&format!("Invalid UTF-8 in variable name: {}", e));
+                    return -1;
+                }
+            }
+        };
+
+        // Convert JSON value to Rust string
+        let json_str = unsafe {
+            match CStr::from_ptr(value_json).to_str() {
+                Ok(s) => s,
+                Err(e) => {
+                    set_last_error(&format!("Invalid UTF-8 in value JSON: {}", e));
+                    return -1;
+                }
+            }
+        };
+
+        // Convert JSON to Rhai Dynamic value
+        let dynamic_value = match crate::values::json_to_rhai_dynamic(json_str) {
+            Ok(v) => v,
+            Err(e) => {
+                set_last_error(&format!("Failed to parse value JSON: {}", e));
+                return -1;
+            }
+        };
+
+        // Get scope and push the variable
+        let mut scope = engine_wrapper.scope();
+        scope.push(var_name, dynamic_value);
+
+        0 // Success
+    }}
+}
+
+/// Sets an immutable constant in the engine's scope.
+///
+/// This constant will be available to scripts executed with this engine.
+/// Attempting to modify a constant in a script will result in a runtime error.
+///
+/// # Safety
+///
+/// This function is safe to call from FFI. The engine, name, and value_json pointers must be valid.
+///
+/// # Returns
+///
+/// 0 on success, -1 on error.
+/// On error, use `rhai_get_last_error()` to retrieve the error message.
+///
+/// # Arguments
+///
+/// * `engine` - Pointer to the Rhai engine
+/// * `name` - Pointer to a null-terminated C string containing the constant name
+/// * `value_json` - Pointer to a null-terminated C string containing the JSON-encoded value
+#[no_mangle]
+pub extern "C" fn rhai_set_constant(
+    engine: *mut CRhaiEngine,
+    name: *const c_char,
+    value_json: *const c_char,
+) -> i32 {
+    catch_panic! {{
+        clear_last_error();
+
+        // Validate pointers
+        if engine.is_null() {
+            set_last_error("Engine pointer is null");
+            return -1;
+        }
+
+        if name.is_null() {
+            set_last_error("Constant name pointer is null");
+            return -1;
+        }
+
+        if value_json.is_null() {
+            set_last_error("Value JSON pointer is null");
+            return -1;
+        }
+
+        // Get the engine wrapper
+        let engine_wrapper = unsafe { &*engine };
+
+        // Convert constant name to Rust string
+        let const_name = unsafe {
+            match CStr::from_ptr(name).to_str() {
+                Ok(s) => s.to_string(),
+                Err(e) => {
+                    set_last_error(&format!("Invalid UTF-8 in constant name: {}", e));
+                    return -1;
+                }
+            }
+        };
+
+        // Convert JSON value to Rust string
+        let json_str = unsafe {
+            match CStr::from_ptr(value_json).to_str() {
+                Ok(s) => s,
+                Err(e) => {
+                    set_last_error(&format!("Invalid UTF-8 in value JSON: {}", e));
+                    return -1;
+                }
+            }
+        };
+
+        // Convert JSON to Rhai Dynamic value
+        let dynamic_value = match crate::values::json_to_rhai_dynamic(json_str) {
+            Ok(v) => v,
+            Err(e) => {
+                set_last_error(&format!("Failed to parse value JSON: {}", e));
+                return -1;
+            }
+        };
+
+        // Get scope and push the constant
+        let mut scope = engine_wrapper.scope();
+        scope.push_constant(const_name, dynamic_value);
+
+        0 // Success
+    }}
+}
+
+/// Clears all variables and constants from the engine's scope.
+///
+/// This removes all variables previously set via `rhai_set_var` and `rhai_set_constant`.
+/// Registered functions are not affected.
+///
+/// # Safety
+///
+/// This function is safe to call from FFI. The engine pointer must be valid.
+///
+/// # Returns
+///
+/// 0 on success, -1 on error.
+/// On error, use `rhai_get_last_error()` to retrieve the error message.
+///
+/// # Arguments
+///
+/// * `engine` - Pointer to the Rhai engine
+#[no_mangle]
+pub extern "C" fn rhai_clear_scope(engine: *mut CRhaiEngine) -> i32 {
+    catch_panic! {{
+        clear_last_error();
+
+        // Validate pointer
+        if engine.is_null() {
+            set_last_error("Engine pointer is null");
+            return -1;
+        }
+
+        // Get the engine wrapper
+        let engine_wrapper = unsafe { &*engine };
+
+        // Get scope and clear it
+        let mut scope = engine_wrapper.scope();
+        scope.clear();
+
+        0 // Success
     }}
 }
 

@@ -158,6 +158,50 @@ typedef RhaiGetPendingFunctionRequestDart = int Function(
 typedef RhaiProvideFunctionResultNative = Int32 Function(Int64, Pointer<Char>);
 typedef RhaiProvideFunctionResultDart = int Function(int, Pointer<Char>);
 
+/// Typedef for the rhai_set_var function
+///
+/// Sets a mutable variable in the engine's scope.
+///
+/// Args:
+///   engine: Pointer to the Rhai engine
+///   name: Variable name as null-terminated C string
+///   valueJson: JSON-encoded value as null-terminated C string
+///
+/// Returns:
+///   0 on success, -1 on error
+typedef RhaiSetVarNative = Int32 Function(
+    Pointer<CRhaiEngine>, Pointer<Char>, Pointer<Char>);
+typedef RhaiSetVarDart = int Function(
+    Pointer<CRhaiEngine>, Pointer<Char>, Pointer<Char>);
+
+/// Typedef for the rhai_set_constant function
+///
+/// Sets an immutable constant in the engine's scope.
+///
+/// Args:
+///   engine: Pointer to the Rhai engine
+///   name: Constant name as null-terminated C string
+///   valueJson: JSON-encoded value as null-terminated C string
+///
+/// Returns:
+///   0 on success, -1 on error
+typedef RhaiSetConstantNative = Int32 Function(
+    Pointer<CRhaiEngine>, Pointer<Char>, Pointer<Char>);
+typedef RhaiSetConstantDart = int Function(
+    Pointer<CRhaiEngine>, Pointer<Char>, Pointer<Char>);
+
+/// Typedef for the rhai_clear_scope function
+///
+/// Clears all variables and constants from the engine's scope.
+///
+/// Args:
+///   engine: Pointer to the Rhai engine
+///
+/// Returns:
+///   0 on success, -1 on error
+typedef RhaiClearScopeNative = Int32 Function(Pointer<CRhaiEngine>);
+typedef RhaiClearScopeDart = int Function(Pointer<CRhaiEngine>);
+
 /// FFI bindings to the Rhai native library.
 ///
 /// This class provides access to all FFI functions in the Rhai library.
@@ -269,6 +313,11 @@ class RhaiBindings {
   late final RhaiGetPendingFunctionRequestDart _getPendingFunctionRequest;
   late final RhaiProvideFunctionResultDart _provideFunctionResult;
 
+  // Function pointers - Variable/constant setting
+  late final RhaiSetVarDart _setVar;
+  late final RhaiSetConstantDart _setConstant;
+  late final RhaiClearScopeDart _clearScope;
+
   /// Initialize all FFI bindings
   void _initializeBindings() {
     // Error handling functions
@@ -358,6 +407,19 @@ class RhaiBindings {
     _provideFunctionResult = _lib
         .lookup<NativeFunction<RhaiProvideFunctionResultNative>>(
             'rhai_provide_function_result')
+        .asFunction();
+
+    // Variable/constant setting
+    _setVar = _lib
+        .lookup<NativeFunction<RhaiSetVarNative>>('rhai_set_var')
+        .asFunction();
+
+    _setConstant = _lib
+        .lookup<NativeFunction<RhaiSetConstantNative>>('rhai_set_constant')
+        .asFunction();
+
+    _clearScope = _lib
+        .lookup<NativeFunction<RhaiClearScopeNative>>('rhai_clear_scope')
         .asFunction();
   }
 
@@ -479,6 +541,41 @@ class RhaiBindings {
   /// Returns 0 on success, -1 if exec_id not found.
   int provideFunctionResult(int execId, Pointer<Char> resultJson) =>
       _provideFunctionResult(execId, resultJson);
+
+  // Public API - Variable/constant setting
+
+  /// Set a mutable variable in the engine's scope.
+  ///
+  /// Args:
+  ///   engine: Pointer to the Rhai engine
+  ///   name: Variable name as null-terminated C string
+  ///   valueJson: JSON-encoded value as null-terminated C string
+  ///
+  /// Returns:
+  ///   0 on success, -1 on error
+  int setVar(Pointer<CRhaiEngine> engine, Pointer<Char> name, Pointer<Char> valueJson) =>
+      _setVar(engine, name, valueJson);
+
+  /// Set an immutable constant in the engine's scope.
+  ///
+  /// Args:
+  ///   engine: Pointer to the Rhai engine
+  ///   name: Constant name as null-terminated C string
+  ///   valueJson: JSON-encoded value as null-terminated C string
+  ///
+  /// Returns:
+  ///   0 on success, -1 on error
+  int setConstant(Pointer<CRhaiEngine> engine, Pointer<Char> name, Pointer<Char> valueJson) =>
+      _setConstant(engine, name, valueJson);
+
+  /// Clear all variables and constants from the engine's scope.
+  ///
+  /// Args:
+  ///   engine: Pointer to the Rhai engine
+  ///
+  /// Returns:
+  ///   0 on success, -1 on error
+  int clearScope(Pointer<CRhaiEngine> engine) => _clearScope(engine);
 
   /// Function addresses for use with NativeFinalizer
   BindingAddresses get addresses => BindingAddresses(this);

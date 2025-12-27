@@ -345,6 +345,11 @@ pub extern "C" fn rhai_eval_async_start(
         let engine_wrapper = unsafe { &*engine };
         let engine_arc = engine_wrapper.inner.clone();
 
+        // Clone the scope for the background thread
+        // This makes variables set via setVar/setConstant available to async scripts
+        // Note: Changes made by the script to the scope are isolated to this execution
+        let mut scope = engine_wrapper.scope().clone();
+
         // Generate unique eval ID
         let eval_id = NEXT_ASYNC_EVAL_ID.fetch_add(1, Ordering::SeqCst);
 
@@ -359,8 +364,8 @@ pub extern "C" fn rhai_eval_async_start(
             // Set async eval mode for this thread
             crate::functions::set_async_eval_mode(true);
 
-            // Execute the script
-            let result = engine_arc.eval::<rhai::Dynamic>(&script_str);
+            // Execute the script with the cloned scope
+            let result = engine_arc.eval_with_scope::<rhai::Dynamic>(&mut scope, &script_str);
 
             // Clear async eval mode
             crate::functions::set_async_eval_mode(false);

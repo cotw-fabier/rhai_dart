@@ -3,8 +3,8 @@
 //! This module defines C-compatible types for passing data across the FFI boundary.
 //! All structs use #[repr(C)] to ensure consistent memory layout.
 
-use std::sync::Arc;
-use rhai::Engine;
+use std::sync::{Arc, Mutex};
+use rhai::{Engine, Scope};
 use std::ffi::c_char;
 
 /// Opaque handle for a Rhai engine instance.
@@ -24,6 +24,10 @@ pub struct CRhaiEngine {
     /// Async callback timeout in seconds
     /// This is stored per-engine to allow different engines to have different timeouts
     pub(crate) async_timeout_seconds: u64,
+
+    /// Variable scope for storing variables set from Dart
+    /// Wrapped in Mutex for thread-safe access from async eval
+    pub(crate) scope: Mutex<Scope<'static>>,
 }
 
 impl CRhaiEngine {
@@ -32,7 +36,13 @@ impl CRhaiEngine {
         Self {
             inner: Arc::new(engine),
             async_timeout_seconds,
+            scope: Mutex::new(Scope::new()),
         }
+    }
+
+    /// Gets a mutable reference to the scope
+    pub(crate) fn scope(&self) -> std::sync::MutexGuard<'_, Scope<'static>> {
+        self.scope.lock().unwrap()
     }
 
     /// Gets a reference to the inner engine
@@ -163,5 +173,7 @@ mod tests {
         let wrapper = CRhaiEngine::new(engine, 30);
         assert!(!Arc::as_ptr(&wrapper.inner).is_null());
         assert_eq!(wrapper.async_timeout_seconds(), 30);
+        // Verify scope is initialized and accessible
+        assert!(wrapper.scope().is_empty());
     }
 }
