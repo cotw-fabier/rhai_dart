@@ -194,7 +194,8 @@ class RhaiBindings {
     // Get the expected library name based on platform
     final String libName;
     if (Platform.isMacOS) {
-      libName = 'librhai_dart.dylib';
+      // On macOS, native assets builds as a framework, not a dylib
+      libName = 'rhai_dart.framework/rhai_dart';
     } else if (Platform.isLinux) {
       libName = 'librhai_dart.so';
     } else if (Platform.isWindows) {
@@ -207,7 +208,6 @@ class RhaiBindings {
     // This is where the build hook places the compiled library
     try {
       // Native assets are automatically resolved by the Dart VM
-      // when using the native_assets experimental feature
       return DynamicLibrary.open(libName);
     } catch (e) {
       // If native assets don't work, try development paths
