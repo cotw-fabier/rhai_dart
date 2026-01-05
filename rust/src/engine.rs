@@ -143,6 +143,18 @@ impl EngineConfig {
             tera.render("tpl", &context)
                 .map_err(|e| format!("Render error: {}", e).into())
         });
+
+        // Register to_json function - converts any Rhai value to a JSON string
+        engine.register_fn("to_json", |value: Dynamic| -> Result<String, Box<rhai::EvalAltResult>> {
+            crate::values::rhai_dynamic_to_json(&value)
+                .map_err(|e| format!("JSON serialization failed: {}", e).into())
+        });
+
+        // Register from_json function - parses a JSON string into a Rhai value
+        engine.register_fn("from_json", |json_str: &str| -> Result<Dynamic, Box<rhai::EvalAltResult>> {
+            crate::values::json_to_rhai_dynamic(json_str)
+                .map_err(|e| format!("JSON parsing failed: {}", e).into())
+        });
     }
 }
 
@@ -1057,6 +1069,120 @@ mod tests {
             // The script is syntactically valid (even though it would timeout if executed)
             assert!(analysis.is_valid);
             let _ = CString::from_raw(result_ptr);
+        }
+
+        rhai_engine_free(engine);
+    }
+
+    #[test]
+    fn test_to_json_in_script() {
+        let engine = rhai_engine_new(std::ptr::null());
+        assert!(!engine.is_null());
+
+        // Test converting a map to JSON
+        let script = CString::new(r#"
+            let data = #{ name: "Alice", age: 30 };
+            to_json(data)
+        "#).unwrap();
+        let mut result_ptr: *mut c_char = std::ptr::null_mut();
+
+        let ret = rhai_eval(engine, script.as_ptr(), &mut result_ptr as *mut *mut c_char);
+
+        assert_eq!(ret, 0);
+        assert!(!result_ptr.is_null());
+
+        unsafe {
+            let result_str = CStr::from_ptr(result_ptr).to_str().unwrap();
+            // The result is a JSON string containing the serialized map
+            let parsed: serde_json::Value = serde_json::from_str(result_str).unwrap();
+            // The outer layer is a string (the JSON output from to_json)
+            let inner_json: serde_json::Value = serde_json::from_str(parsed.as_str().unwrap()).unwrap();
+            assert_eq!(inner_json["name"], "Alice");
+            assert_eq!(inner_json["age"], 30);
+            let _ = CString::from_raw(result_ptr);
+        }
+
+        rhai_engine_free(engine);
+    }
+
+    #[test]
+    fn test_from_json_in_script() {
+        let engine = rhai_engine_new(std::ptr::null());
+        assert!(!engine.is_null());
+
+        // Test parsing JSON string into a Rhai value
+        let script = CString::new(r#"
+            let parsed = from_json(`{"x": 10, "y": 20}`);
+            parsed.x + parsed.y
+        "#).unwrap();
+        let mut result_ptr: *mut c_char = std::ptr::null_mut();
+
+        let ret = rhai_eval(engine, script.as_ptr(), &mut result_ptr as *mut *mut c_char);
+
+        assert_eq!(ret, 0);
+        assert!(!result_ptr.is_null());
+
+        unsafe {
+            let result_str = CStr::from_ptr(result_ptr).to_str().unwrap();
+            assert_eq!(result_str, "30");
+            let _ = CString::from_raw(result_ptr);
+        }
+
+        rhai_engine_free(engine);
+    }
+
+    #[test]
+    fn test_json_roundtrip_in_script() {
+        let engine = rhai_engine_new(std::ptr::null());
+        assert!(!engine.is_null());
+
+        // Test roundtrip: create data, serialize to JSON, parse back, access values
+        let script = CString::new(r#"
+            let original = #{ items: [1, 2, 3], active: true };
+            let json_str = to_json(original);
+            let restored = from_json(json_str);
+            restored.items[0] + restored.items[1] + restored.items[2]
+        "#).unwrap();
+        let mut result_ptr: *mut c_char = std::ptr::null_mut();
+
+        let ret = rhai_eval(engine, script.as_ptr(), &mut result_ptr as *mut *mut c_char);
+
+        assert_eq!(ret, 0);
+        assert!(!result_ptr.is_null());
+
+        unsafe {
+            let result_str = CStr::from_ptr(result_ptr).to_str().unwrap();
+            assert_eq!(result_str, "6");
+            let _ = CString::from_raw(result_ptr);
+        }
+
+        rhai_engine_free(engine);
+    }
+
+    #[test]
+    fn test_from_json_invalid() {
+        use crate::error::{rhai_get_last_error, rhai_free_error};
+
+        let engine = rhai_engine_new(std::ptr::null());
+        assert!(!engine.is_null());
+
+        // Test parsing invalid JSON
+        let script = CString::new(r#"
+            from_json("invalid json {")
+        "#).unwrap();
+        let mut result_ptr: *mut c_char = std::ptr::null_mut();
+
+        let ret = rhai_eval(engine, script.as_ptr(), &mut result_ptr as *mut *mut c_char);
+
+        assert_eq!(ret, -1);
+
+        let error_ptr = rhai_get_last_error();
+        assert!(!error_ptr.is_null());
+
+        unsafe {
+            let error_str = CStr::from_ptr(error_ptr).to_str().unwrap();
+            assert!(error_str.contains("JSON parsing failed") || error_str.contains("Failed to parse JSON"));
+            rhai_free_error(error_ptr);
         }
 
         rhai_engine_free(engine);
